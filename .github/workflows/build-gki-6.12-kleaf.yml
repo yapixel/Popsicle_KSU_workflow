@@ -395,6 +395,17 @@ jobs:
           cd "$KERNEL_ROOT"
           mkdir -p "$DIST_DIR" "$BAZEL_CACHE_DIR"
 
+          # Prepend repo-synced prebuilts so their depmod/pahole/etc.
+          # shadow the host versions. Fixes: depmod: unrecognized option: d
+          PREBUILTS_BIN="$KERNEL_ROOT/prebuilts/kernel-build-tools/linux-x86/bin"
+          if [ -d "$PREBUILTS_BIN" ]; then
+            export PATH="$PREBUILTS_BIN:$PATH"
+            echo "✅ Prebuilts PATH: $PREBUILTS_BIN"
+            echo "   depmod: $(which depmod)"
+          else
+            echo "⚠️ Prebuilts bin not found at $PREBUILTS_BIN — using host depmod"
+          fi
+
           BUILD_FLAGS=(
             "--disk_cache=$BAZEL_CACHE_DIR"
             "--config=fast"
@@ -404,6 +415,7 @@ jobs:
             "--action_env=KBUILD_BUILD_HOST=$KBUILD_BUILD_HOST"
             "--action_env=KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
             "--action_env=KBUILD_BUILD_VERSION=$KBUILD_BUILD_VERSION"
+            "--action_env=PATH=$PREBUILTS_BIN:$PATH"
           )
 
           [[ "${{ github.event.inputs.debug }}" == "true" ]] \
