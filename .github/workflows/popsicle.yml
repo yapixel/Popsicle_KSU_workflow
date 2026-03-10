@@ -1,7 +1,6 @@
-name: Build GKI Kernel android16-6.12 (KowSU + Kleaf)
+name: Build GKI Kernel (KowSU + Kleaf)
 
 # ============================================================
-# TARGET:      android16-6.12 (kernel 6.12.x)
 # BUILD SYSTEM: Kleaf / Bazel (repo-synced toolchain)
 # VARIANT:     kowsu (KOWX712/KernelSU) — hardcoded, no matrix
 # ============================================================
@@ -9,10 +8,25 @@ name: Build GKI Kernel android16-6.12 (KowSU + Kleaf)
 on:
   workflow_dispatch:
     inputs:
-      os_patch_level:
-        description: 'OS patch level (e.g. 2026-03)'
+      android_version:
+        description: 'Android version (e.g. android16)'
         required: true
-        default: '2026-03'
+        default: 'android16'
+        type: string
+      kernel_version:
+        description: 'Kernel version (e.g. 6.12)'
+        required: true
+        default: '6.12'
+        type: string
+      sub_level:
+        description: 'Kernel sublevel (e.g. 23 for 6.12.23)'
+        required: true
+        default: '23'
+        type: string
+      os_patch_level:
+        description: 'OS patch level (e.g. 2025-05 or 2025-05-exp)'
+        required: true
+        default: '2025-05-exp'
         type: string
       disable_susfs:
         description: 'Disable SuSFS'
@@ -39,7 +53,10 @@ permissions:
   contents: read          # default: read-only; create_release overrides below
 
 env:
-  MANIFEST_BRANCH: "common-android16-6.12-${{ github.event.inputs.os_patch_level }}"
+  ANDROID_VERSION: ${{ github.event.inputs.android_version }}
+  KERNEL_VERSION:  ${{ github.event.inputs.kernel_version }}
+  SUB_LEVEL:       ${{ github.event.inputs.sub_level }}
+  OS_PATCH_LEVEL:  ${{ github.event.inputs.os_patch_level }}
   KERNEL_ROOT:     ${{ github.workspace }}/android-kernel
   DIST_DIR:        ${{ github.workspace }}/dist
   BAZEL_CACHE_DIR: ${{ github.workspace }}/.cache/bazel
@@ -120,9 +137,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.BAZEL_CACHE_DIR }}
-          key: bazel-kowsu-android16-6.12-${{ github.sha }}
+          key: bazel-kowsu-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-${{ github.sha }}
           restore-keys: |
-            bazel-kowsu-android16-6.12-
+            bazel-kowsu-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-
+            bazel-kowsu-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-
             bazel-kowsu-
 
       # ----------------------------------------------------------------
@@ -133,7 +151,7 @@ jobs:
         run: |
           mkdir -p "$KERNEL_ROOT" && cd "$KERNEL_ROOT"
 
-          FORMATTED_BRANCH="android16-6.12-${{ github.event.inputs.os_patch_level }}"
+          FORMATTED_BRANCH="${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-${{ github.event.inputs.os_patch_level }}"
 
           echo "📦 repo init: branch=common-${FORMATTED_BRANCH}"
           repo init \
@@ -176,11 +194,11 @@ jobs:
           # the version capture; patching is gated below)
           if [ -d "$SUSFS_PATH/.git" ]; then
             echo "♻️ Updating SuSFS..."
-            git -C "$SUSFS_PATH" fetch --depth=1 origin gki-android16-6.12
-            git -C "$SUSFS_PATH" reset --hard origin/gki-android16-6.12
+            git -C "$SUSFS_PATH" fetch --depth=1 origin "gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}"
+            git -C "$SUSFS_PATH" reset --hard "origin/gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}"
             git -C "$SUSFS_PATH" clean -fdx
           else
-            git clone --depth=1 --branch=gki-android16-6.12 \
+            git clone --depth=1 --branch="gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}" \
               https://gitlab.com/simonpunk/susfs4ksu "$SUSFS_PATH"
           fi
 
@@ -237,7 +255,7 @@ jobs:
         if: env.ENABLE_SUSFS == 'true'
         run: |
           COMMON_DIR="$KERNEL_ROOT/common"
-          PATCH_NAME="50_add_susfs_in_gki-android16-6.12.patch"
+          PATCH_NAME="50_add_susfs_in_gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}.patch"
 
           # Copy SuSFS source files into kernel tree
           cp "$SUSFS_DIR/kernel_patches/fs/"*              "$COMMON_DIR/fs/"
@@ -416,10 +434,8 @@ jobs:
       # ----------------------------------------------------------------
       - name: Package (AnyKernel3)
         run: |
-          MF="$KERNEL_ROOT/common/Makefile"
-          VER="$(grep '^VERSION '    $MF | awk '{print $3}')"
-          VER+=".$(grep '^PATCHLEVEL ' $MF | awk '{print $3}')"
-          VER+=".$(grep '^SUBLEVEL '   $MF | awk '{print $3}')"
+          # Full version string matches upstream format: 6.12.23-android16-2025-05-exp
+          FULL_VER="${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-${{ github.event.inputs.android_version }}-${{ github.event.inputs.os_patch_level }}"
 
           git clone --depth=1 --branch=gki2.0 \
             https://github.com/WildKernels/AnyKernel3 AnyKernel3
@@ -428,12 +444,12 @@ jobs:
           [ -f "$DIST_DIR/dtb.img" ] && cp "$DIST_DIR/dtb.img" AnyKernel3/
 
           cd AnyKernel3 && rm -rf .git .github
-          ZIP_NAME="AK3-${VER}-kowsu-r${KSU_VERSION}.zip"
+          ZIP_NAME="AK3-${FULL_VER}-kowsu-r${KSU_VERSION}.zip"
           zip -r9 "../$ZIP_NAME" .
           cd ..
 
-          echo "KERNEL_ZIP=$ZIP_NAME" >> $GITHUB_ENV
-          echo "KERNEL_VERSION=$VER"  >> $GITHUB_ENV
+          echo "KERNEL_ZIP=$ZIP_NAME"       >> $GITHUB_ENV
+          echo "KERNEL_VERSION=$FULL_VER"   >> $GITHUB_ENV
           echo "📦 Packaged: $ZIP_NAME"
 
       # ----------------------------------------------------------------
@@ -513,7 +529,7 @@ jobs:
           ls -lh
 
           RELEASE_NOTES="**Build Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
-          **Kernel:** android16-6.12-${{ github.event.inputs.os_patch_level }}
+          **Kernel:** ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-${{ github.event.inputs.os_patch_level }}
           **Variant:** KowSU
           **SuSFS:** $( [ "${{ github.event.inputs.disable_susfs }}" = "true" ] && echo "❌ Disabled" || echo "✅ Enabled" )
 
@@ -524,12 +540,12 @@ jobs:
           Flash the ZIP in Kernel Flasher, or extract \`Image\` and patch \`boot.img\` manually."
 
           gh release create "build-${{ github.run_number }}" \
-            --title "GKI android16-6.12 KowSU Build #${{ github.run_number }}" \
+            --title "GKI ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} KowSU Build #${{ github.run_number }}" \
             --notes "$RELEASE_NOTES" \
             --repo  "${{ github.repository }}" \
             ./*.zip ./*.md 2>/dev/null \
             || gh release create "build-${{ github.run_number }}" \
-               --title "GKI android16-6.12 KowSU Build #${{ github.run_number }}" \
+               --title "GKI ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} KowSU Build #${{ github.run_number }}" \
                --notes "$RELEASE_NOTES" \
                --repo  "${{ github.repository }}" \
                ./*.zip
