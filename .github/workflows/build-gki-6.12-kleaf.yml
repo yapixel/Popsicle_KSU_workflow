@@ -1,3 +1,4 @@
+
 name: Build GKI Kernel (KowSU + Kleaf)
 
 # ============================================================
@@ -108,7 +109,14 @@ jobs:
             build-essential python3 python3-pip \
             rsync curl git zip unzip \
             libncurses-dev gawk dwarves zstd pahole \
-            openjdk-17-jdk-headless
+            openjdk-17-jdk-headless \
+            kmod
+
+          # Kleaf calls depmod -d (--basedir). Verify host depmod supports it.
+          echo "depmod version: $(depmod -V)"
+          depmod --help 2>&1 | grep -qE '\-d|basedir' \
+            && echo "✅ depmod supports -d" \
+            || echo "⚠️ depmod may not support -d — build may fail at modules_install"
           echo "✅ Host dependencies installed"
 
       # ----------------------------------------------------------------
@@ -274,31 +282,26 @@ jobs:
           echo "🚫 Removing GKI protected exports..."
           rm -f "$COMMON_DIR/android/abi_gki_protected_exports_"* || true
 
-          # ── depmod fix ────────────────────────────────────────────────────
-          PREBUILT_DEPMOD="$KERNEL_ROOT/prebuilts/kernel-build-tools/linux-x86/bin/depmod"
-          echo "🔍 Checking prebuilt depmod: $PREBUILT_DEPMOD"
-          if [ -f "$PREBUILT_DEPMOD" ]; then
-            sudo cp "$PREBUILT_DEPMOD" /usr/sbin/depmod
-            sudo cp "$PREBUILT_DEPMOD" /sbin/depmod
-            echo "✅ Host depmod replaced with prebuilt (supports -d)"
-          else
-            echo "⚠️  Prebuilt depmod not found"
-            ls "$KERNEL_ROOT/prebuilts/kernel-build-tools/linux-x86/bin/" 2>/dev/null || true
-          fi
+          # Keep kernel version string clean (no -dirty suffix)
+          sed -i '/# Check for uncommitted changes\./,/fi/d' \
+            "$COMMON_DIR/scripts/setlocalversion" || true
 
-          # ── Kernel version spoof ──────────────────────────────────────────
+          # ── Version spoof ─────────────────────────────────────────────────
+          # Write a localversion file — kbuild reads all localversion* files
+          # in the source root and appends them to KERNELRELEASE. This is the
+          # standard mechanism and works inside Kleaf's hermetic sandbox.
+          echo "-android16-5-g6928909e3148-abogki444322847-4k" \
+            > "$COMMON_DIR/localversion-kleaf"
+          echo "✅ localversion-kleaf written"
+
+          # Patch SUBLEVEL in Makefile to match our target sublevel
           sed -i "s/^SUBLEVEL = .*/SUBLEVEL = ${{ github.event.inputs.sub_level }}/" \
             "$COMMON_DIR/Makefile"
-          printf '#!/bin/sh\necho "-android16-5-g6928909e3148-abogki444322847-4k"\n' \
-            > "$COMMON_DIR/scripts/setlocalversion"
-          chmod +x "$COMMON_DIR/scripts/setlocalversion"
-          echo "✅ Version spoofed"
+          echo "✅ SUBLEVEL set to ${{ github.event.inputs.sub_level }}"
 
-          # Build metadata
-          echo "KBUILD_BUILD_USER=kleaf"                             >> $GITHUB_ENV
-          echo "KBUILD_BUILD_HOST=build-host"                        >> $GITHUB_ENV
-          echo "KBUILD_BUILD_TIMESTAMP=Fri Sep 12 04:57:41 UTC 2025" >> $GITHUB_ENV
-          echo "KBUILD_BUILD_VERSION=1"                              >> $GITHUB_ENV
+          # Export KBUILD_BUILD_USER / HOST for --action_env injection below
+          echo "KBUILD_BUILD_USER=builder"   >> $GITHUB_ENV
+          echo "KBUILD_BUILD_HOST=github-ci" >> $GITHUB_ENV
 
           # libbpf type cast fix (present in some 6.12 snapshots)
           if grep -q 'next_path = strchr' \
@@ -308,6 +311,7 @@ jobs:
               "$COMMON_DIR/tools/lib/bpf/libbpf.c"
             echo "🔧 libbpf.c type cast fixed"
           fi
+
 
       # ----------------------------------------------------------------
       # 12. Write defconfig fragment
@@ -387,10 +391,9 @@ jobs:
             "--config=fast"
             "--lto=none"
             "--defconfig_fragment=//common:arch/arm64/configs/ksu_susfs.fragment"
+            "--kleaf_localversion"
             "--action_env=KBUILD_BUILD_USER=$KBUILD_BUILD_USER"
             "--action_env=KBUILD_BUILD_HOST=$KBUILD_BUILD_HOST"
-            "--action_env=KBUILD_BUILD_TIMESTAMP=$KBUILD_BUILD_TIMESTAMP"
-            "--action_env=KBUILD_BUILD_VERSION=$KBUILD_BUILD_VERSION"
           )
 
           [[ "${{ github.event.inputs.debug }}" == "true" ]] \
