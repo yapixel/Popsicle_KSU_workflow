@@ -621,7 +621,7 @@ jobs:
         run: |
           cd release-assets && ls -lh
 
-          RELEASE_TITLE="GKI ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} | KowSU r${KSU_VERSION} | SuSFS ${SUSFS_BUILD_TAG}"
+          RELEASE_TITLE="GKI ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }} | KowSU r${KSU_VERSION} | SuSFS ${SUSFS_BUILD_TAG}"
 
           RELEASE_NOTES="**Build Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
           **Kernel:** ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-${{ github.event.inputs.os_patch_level }}
