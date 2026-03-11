@@ -138,36 +138,46 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        exclude:
+          - variant:
+              name: mksu
         variant:
           # ── KowSU ──────────────────────────────────────────────────────
-          - name:        kowsu
-            label:       KowSU
-            ksu_owner:   KOWX712
-            ksu_repo:    KernelSU
-            ksu_branch:  master
-            setup_url:   https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
-            susfs_core:  from_susfs4ksu
-            susfs_patch: kowsu/10_enable_susfs_for_ksu.patch
+          - name:           kowsu
+            label:          KowSU
+            enabled:        true
+            ksu_owner:      KOWX712
+            ksu_repo:       KernelSU
+            ksu_branch:     master
+            # branch on backslashxx/KernelSU used for version numbering
+            ksu_ver_branch: master
+            setup_url:      https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
+            susfs_core:     from_susfs4ksu
+            susfs_patch:    kowsu/10_enable_susfs_for_ksu.patch
 
-          # ── MKSU ───────────────────────────────────────────────────────
-          - name:        mksu
-            label:       MKSU
-            ksu_owner:   5ec1cff
-            ksu_repo:    KernelSU
-            ksu_branch:  main
-            setup_url:   https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh
-            susfs_core:  from_yapixel
-            susfs_patch: mksu/10_enable_susfs_for_ksu.patch
+          # ── MKSU — disabled (patches not working) ──────────────────────
+          - name:           mksu
+            label:          MKSU
+            enabled:        false
+            ksu_owner:      5ec1cff
+            ksu_repo:       KernelSU
+            ksu_branch:     main
+            ksu_ver_branch: main
+            setup_url:      https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh
+            susfs_core:     from_yapixel
+            susfs_patch:    mksu/10_enable_susfs_for_ksu.patch
 
           # ── ReSukiSU ───────────────────────────────────────────────────
-          - name:        resukisu
-            label:       ReSukiSU
-            ksu_owner:   ReSukiSU
-            ksu_repo:    ReSukiSU
-            ksu_branch:  main
-            setup_url:   https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh
-            susfs_core:  from_susfs4ksu
-            susfs_patch: ""
+          - name:           resukisu
+            label:          ReSukiSU
+            enabled:        true
+            ksu_owner:      ReSukiSU
+            ksu_repo:       ReSukiSU
+            ksu_branch:     main
+            ksu_ver_branch: main
+            setup_url:      https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh
+            susfs_core:     from_susfs4ksu
+            susfs_patch:    ""
 
     env:
       SUSFS_VERSION:      ${{ needs.setup.outputs.susfs_version }}
@@ -345,25 +355,47 @@ jobs:
           echo "✅ ${{ matrix.variant.label }} integrated"
 
       # -----------------------------------------------------------------------
-      # 8. Capture KSU version via helper script
+      # 8. Capture KSU version
+      #    KowSU / MKSU : get_ksuver.sh against backslashxx/KernelSU
+      #    ReSukiSU     : local commit count formula — 40000 + count - 2815
       # -----------------------------------------------------------------------
       - name: Capture ${{ matrix.variant.label }} version info
         id: ksu_version
         run: |
-          KSU_VERSION=$(./sh/get_ksuver.sh \
-            "${{ matrix.variant.ksu_owner }}" \
-            "${{ matrix.variant.ksu_repo }}" \
-            "${{ matrix.variant.ksu_branch }}" \
-            || echo "unknown")
+          KSU_DIR="$KERNEL_ROOT/common/KernelSU"
+
+          if [ "${{ matrix.variant.name }}" = "resukisu" ]; then
+            # ── ReSukiSU — local formula ────────────────────────────────
+            cd "$KSU_DIR"
+            git fetch --unshallow --quiet \
+              || git fetch --depth=10000 --quiet \
+              || true
+            git fetch origin main:main --quiet || true
+            KSU_COUNT=$(git rev-list --count main)
+            KSU_VERSION=$((40000 + KSU_COUNT - 2815))
+            echo "📌 ReSukiSU version: r$KSU_VERSION (count=$KSU_COUNT)"
+          else
+            # ── KowSU / MKSU — helper script against backslashxx/KernelSU ─
+            KSU_VERSION=$(./sh/get_ksuver.sh \
+              "backslashxx" \
+              "KernelSU" \
+              "${{ matrix.variant.ksu_ver_branch }}" \
+              || echo "unknown")
+
+            if [ -z "$KSU_VERSION" ] || [ "$KSU_VERSION" = "unknown" ]; then
+              echo "❌ Failed to determine KSU version for ${{ matrix.variant.label }}"
+              exit 1
+            fi
+            echo "📌 ${{ matrix.variant.label }} version: r$KSU_VERSION"
+          fi
 
           {
             echo "KSU_VERSION=$KSU_VERSION"
-            echo "KSU_COMMIT_SHORT=$(git -C "$KERNEL_ROOT/common/KernelSU" log -1 --format='%h' 2>/dev/null || echo 'unknown')"
-            echo "KSU_COMMIT_MSG=$(git -C "$KERNEL_ROOT/common/KernelSU" log -1 --format='%s' 2>/dev/null || echo 'unknown')"
+            echo "KSU_COMMIT_SHORT=$(git -C "$KSU_DIR" log -1 --format='%h' 2>/dev/null || echo 'unknown')"
+            echo "KSU_COMMIT_MSG=$(git -C "$KSU_DIR" log -1 --format='%s' 2>/dev/null || echo 'unknown')"
           } >> "$GITHUB_ENV"
 
           echo "ksu_version=$KSU_VERSION" >> "$GITHUB_OUTPUT"
-          echo "📌 ${{ matrix.variant.label }} version: r$KSU_VERSION"
 
       # -----------------------------------------------------------------------
       # 9. Apply SuSFS patches
