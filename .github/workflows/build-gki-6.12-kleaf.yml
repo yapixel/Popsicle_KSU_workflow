@@ -283,6 +283,26 @@ jobs:
           echo "🚫 Removing GKI protected exports..."
           rm -f "$COMMON_DIR/android/abi_gki_protected_exports_"* || true
 
+          # ── depmod fix ────────────────────────────────────────────────────
+          # Kleaf's modules_install.sh calls depmod with -d (--basedir).
+          # The Ubuntu runner's kmod uses -b for basedir, not -d.
+          # processwrapper-sandbox resolves tool paths from Kleaf's own
+          # scripts — PATH wrappers are ignored. Find and patch the script
+          # that invokes depmod directly inside the build system.
+          MODULES_INSTALL_SH=$(grep -rl "depmod" "$KERNEL_ROOT/build/" \
+            "$KERNEL_ROOT/prebuilts/" 2>/dev/null | head -5 || true)
+          echo "🔍 Scripts invoking depmod: $MODULES_INSTALL_SH"
+
+          for f in $(grep -rl 'depmod' \
+              "$KERNEL_ROOT/build/kernel/kleaf/" \
+              "$KERNEL_ROOT/build/kernel/" 2>/dev/null); do
+            if grep -q '\-d ' "$f" 2>/dev/null; then
+              echo "🔧 Patching -d → -b in: $f"
+              sed -i 's/depmod -d /depmod -b /g; s/depmod -d$/depmod -b/g' "$f"
+            fi
+          done
+          echo "✅ depmod -d → -b patch applied"
+
           # ── Kernel version spoof ──────────────────────────────────────────
           # We set KBUILD_BUILD_* env vars and pass them via --action_env
           # into the Bazel sandbox at build time. This avoids touching
