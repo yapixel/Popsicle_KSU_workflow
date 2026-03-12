@@ -1,12 +1,11 @@
-
-name: 加速版构建 6.12.23 with SUSFS KowSU
+name: 加速版构建 6.12.23 欧加真OKI内核 susfs kowsu
 
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android16'
   KERNEL_VERSION: '6.12'
   SUB_VERSION: '23'
-  KERNEL_NAME: 'android16-5-g6928909e3148-abogki444322847'
+  KERNEL_NAME: 'android16-5-g6928909e3148-abogki444322847-4k'
   CCACHE_KEY: ccache-neov5-6.12.23
 
 on:
@@ -44,15 +43,6 @@ on:
         required: true
         type: boolean
         default: 'false'
-      bbr_enable:
-        description: "是否启用bbr算法(优化上行数据,对手机日用无太大意义甚至可能负优化;false关闭,true仅加入算法,default启用算法并设为默认)"
-        required: true
-        type: choice
-        default: 'false'
-        options:
-          - 'false'
-          - 'true'
-          - 'default'
       better_net:
         description: '是否开启网络功能拓展配置(用于为ipset及需要iptables等高级网络功能内核支持的程序提供支持)'
         required: true
@@ -68,11 +58,6 @@ on:
         required: true
         type: boolean
         default: 'false'
-      baseband_guard:
-        description: '是否开启内核级基带保护(阻止一切对非用户分区的写入，有效防止格机)'
-        required: true
-        type: boolean
-        default: 'true'
       ccache_update:
         description: '更新ccache缓存(将本次编译生成的ccache缓存覆盖至仓库缓存，在更改编译配置、源码或需要刷新缓存时开启)'
         required: true
@@ -196,8 +181,7 @@ jobs:
           
           if [[ ${{ github.event.inputs.ksu_type }} != "none" ]]; then
             echo "正在添加susfs补丁..."
-            #git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
-            git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git susfs4ksu -b gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+            git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
             cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-*.patch ./common/
             cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
             cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
@@ -250,28 +234,20 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_MAP=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
 
-      - name: 启用其他特性 (BBR/ADIOS/Baseband)
+      - name: 启用其他特性 (Always BBR/ADIOS)
         run: |
           cd kernel_workspace
-          # Baseband Guard
-          if [[ ${{ inputs.baseband_guard }} == "true" ]]; then
-            echo "CONFIG_BBG=y" >> ./common/arch/arm64/configs/gki_defconfig
-            cd ./common && curl -sSL https://github.com/cctv18/Baseband-guard/raw/master/setup.sh | bash && cd ..
-          fi
           # ADIOS
           if [[ ${{ inputs.adios_enable }} == "true" ]]; then
             echo "CONFIG_MQ_IOSCHED_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
             echo "CONFIG_MQ_IOSCHED_DEFAULT_ADIOS=y" >> ./common/arch/arm64/configs/gki_defconfig
           fi
-          # BBR
-          if [[ "${{ github.event.inputs.bbr_enable }}" != "false" ]]; then
-            echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
-            echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm64/configs/gki_defconfig
-            if [[ "${{ github.event.inputs.bbr_enable }}" == "default" ]]; then
-              echo "CONFIG_DEFAULT_TCP_CONG=bbr" >> ./common/arch/arm64/configs/gki_defconfig
-            fi
-          fi
+          # Always Enable BBR
+          echo "正在强制启用 BBR 算法..."
+          echo "CONFIG_TCP_CONG_ADVANCED=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TCP_CONG_BBR=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TCP_CONG_CUBIC=y" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> ./common/arch/arm64/configs/gki_defconfig
            
       - name: 构建内核
         run: |
@@ -295,7 +271,6 @@ jobs:
           echo 'ccache $REAL_CLANG_PATH "$@"' >> cc-wrapper
           chmod +x cc-wrapper
           
-          # make 6.12 kernel
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out gki_defconfig
           export CC="$(pwd)/cc-wrapper"
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" O=out Image
@@ -341,5 +316,5 @@ jobs:
             ### 📱 KowSU sm8850 构建信息
             - KowSU版本: r${{ needs.build.outputs.ksuver }}
             - susfs支持: ${{ github.event.inputs.susfs_enable }}
-            - 基带保护: ${{ github.event.inputs.baseband_guard }}
+            - TCP优化: BBR (Always Enabled)
           files: ./*.zip
