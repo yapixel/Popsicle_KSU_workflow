@@ -79,13 +79,13 @@ jobs:
 
       - name: Clone SuSFS
         run: |
-          git clone --depth=1 \
-            --branch="gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}" \
+          git clone  \
+            --branch="gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-dev" \
             https://gitlab.com/simonpunk/susfs4ksu susfs4ksu
 
           git -C susfs4ksu fetch --unshallow 2>/dev/null || true
           git -C susfs4ksu fetch origin || true
-          git -C susfs4ksu reset --hard c023d8e4013eb8b9fcb17d46b705333f06ddae6c
+          git -C susfs4ksu reset --hard 315af1ddffcfc946cdcc548fd1a51a737e4e9001
           git -C susfs4ksu clean -fdx
 
       - name: Resolve SuSFS version
