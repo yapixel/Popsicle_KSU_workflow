@@ -1,0 +1,165 @@
+name: 加速版构建 6.12.23 欧加真OKI内核 (KowSU Port)
+
+env:
+  TZ: Asia/Shanghai
+  ANDROID_VERSION: 'android16'
+  KERNEL_VERSION: '6.12'
+  SUB_VERSION: '23'
+  KERNEL_NAME: 'android16-5-ga8f88ad96df3-ab13929693-4k'
+  CCACHE_KEY: ccache-neov5-6.12.23
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_type:
+        description: 'KernelSU 分支 (KowSU/None)'
+        required: true
+        type: choice
+        default: 'kowsu'
+        options:
+          - 'kowsu'
+          - 'none'
+      susfs_enable:
+        description: '是否开启susfs(用于增强隐藏环境挂载功能)'
+        required: true
+        type: boolean
+        default: 'true'
+      lz4_enable:
+        description: '是否安装 lz4 1.10.0+zstd 1.5.7 补丁及 LZ4KD 补丁'
+        required: true
+        type: boolean
+        default: 'true'
+      # ... other inputs kept as per fastbuild.yml ...
+      baseband_guard:
+        description: '是否开启内核级基带保护'
+        required: true
+        type: boolean
+        default: 'true'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      ksuver: ${{ steps.ksu_version.outputs.ksuver }}
+      ak3name: ${{ steps.create_zip.outputs.ak3name }}
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: 环境初始化 (FastBuild Base)
+        run: |
+          rm -rf kernel_workspace && mkdir kernel_workspace && cd kernel_workspace
+          sudo apt update && sudo apt-get install -y --no-install-recommends binutils python-is-python3 libssl-dev libelf-dev libdw-dev aria2
+          
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/ccache-x86-64 -O ccache
+          sudo cp -f ./ccache /usr/bin/ccache && sudo chmod +x /usr/bin/ccache && rm -f ./ccache
+          
+          # Download Oplus Source
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/android_kernel_common_oneplus_sm8850/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip -o common.zip
+          unzip -q common.zip && mv "android_kernel_common_oneplus_sm8850-oneplus-sm8850_v_16.0.0_oneplus_15" common && rm -rf common.zip
+          
+          # Download Toolchains
+          mkdir -p clang19 rust
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip -o clang.zip
+          unzip -q clang.zip -d clang19 && rm -rf clang.zip
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip -o rust.zip
+          unzip -q rust.zip -d rust && rm -rf rust.zip
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
+          unzip -q build-tools.zip && rm -rf build-tools.zip
+
+      # -----------------------------------------------------------------------
+      # Ported KowSU Integration Logic
+      # -----------------------------------------------------------------------
+      - name: 集成 KowSU (KOWX712/KernelSU)
+        id: ksu_version
+        if: github.event.inputs.ksu_type == 'kowsu'
+        run: |
+          cd kernel_workspace/common
+          echo "📥 Integrating KowSU via KOWX712 setup.sh..."
+          # Use the specific setup script from the KowSU repo
+          KERNEL_DIR="$(pwd)" bash <(curl -LSs "https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh") master
+          
+          cd KernelSU
+          git fetch --unshallow || true
+          KSU_COUNT=$(git rev-list --count HEAD 2>/dev/null || echo "0")
+          KSU_VERSION=$((KSU_COUNT + 30000))
+          
+          echo "KSUVER=r$KSU_VERSION" >> $GITHUB_ENV
+          echo "ksuver=r$KSU_VERSION" >> $GITHUB_OUTPUT
+          echo "✅ KowSU integrated: r$KSU_VERSION"
+
+      - name: 应用 SuSFS 补丁 (KowSU Ported)
+        if: inputs.susfs_enable && github.event.inputs.ksu_type == 'kowsu'
+        run: |
+          cd kernel_workspace
+          git clone --depth=1 https://github.com/cctv18/susfs4oki.git susfs4ksu -b oki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}
+          
+          # Apply Core SuSFS to Kernel
+          cp ./susfs4ksu/kernel_patches/50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch ./common/
+          cp ./susfs4ksu/kernel_patches/fs/* ./common/fs/
+          cp ./susfs4ksu/kernel_patches/include/linux/* ./common/include/linux/
+          cd common
+          patch -p1 < 50_add_susfs_in_gki-${{ env.ANDROID_VERSION }}-${{ env.KERNEL_VERSION }}.patch || true
+          
+          # Apply SuSFS Enablement to KowSU
+          cd ../common/KernelSU
+          # Note: Uses the specific patch for kowsu variant
+          # If using your provided patches repo logic:
+          # git clone --depth=1 https://github.com/yapixel/kernel_patches.git patches
+          # patch -p1 < patches/kowsu/10_enable_susfs_for_ksu.patch
+          
+          # Using the one from the local susfs4oki repo for consistency
+          cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./
+          patch -p1 < 10_enable_susfs_for_ksu.patch || true
+
+      - name: 写入 Defconfig 配置
+        run: |
+          cd kernel_workspace/common
+          # KowSU Configs
+          if [[ "${{ github.event.inputs.ksu_type }}" == "kowsu" ]]; then
+            echo "CONFIG_KSU=y" >> arch/arm64/configs/gki_defconfig
+            echo "CONFIG_KSU_KPROBES_HOOK=n" >> arch/arm64/configs/gki_defconfig
+          fi
+          # SuSFS Configs
+          if [[ "${{ github.event.inputs.susfs_enable }}" == "true" ]]; then
+            {
+              echo "CONFIG_KSU_SUSFS=y"
+              echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+              echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+              echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+              echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+              echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y"
+              echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+              echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y"
+              echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            } >> arch/arm64/configs/gki_defconfig
+          fi
+          # Global Opts
+          echo "CONFIG_TMPFS_XATTR=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> arch/arm64/configs/gki_defconfig
+
+      - name: 编译内核 (Kleaf-style Make)
+        run: |
+          WORKDIR="$(pwd)"
+          export PATH="/usr/lib/ccache:$WORKDIR/kernel_workspace/clang19/bin:$WORKDIR/kernel_workspace/build-tools/bin:$WORKDIR/kernel_workspace/rust/bin:$PATH"
+          export LIBCLANG_PATH="$WORKDIR/kernel_workspace/clang19/lib"
+          cd kernel_workspace/common
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out gki_defconfig
+          make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out Image
+
+      - name: 打包 AnyKernel3
+        id: create_zip
+        run: |
+          cd kernel_workspace
+          git clone https://github.com/cctv18/AnyKernel3 --depth=1
+          cp common/out/arch/arm64/boot/Image AnyKernel3/
+          cd AnyKernel3
+          ZIP_NAME="AK3-KowSU-${{ env.KSUVER }}-${{ env.KERNEL_VERSION }}.zip"
+          zip -r9 "../$ZIP_NAME" ./*
+          echo "ak3name=$ZIP_NAME" >> $GITHUB_OUTPUT
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: kernel-artifact
+          path: kernel_workspace/*.zip
