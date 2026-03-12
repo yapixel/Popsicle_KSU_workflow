@@ -366,10 +366,6 @@ jobs:
       - name: Setup SuSFS
         if: env.ENABLE_SUSFS == 'true'
         run: |
-          # Ensure kernel tree is pristine before patching — prevents stale hunks
-          # from a previous failed run causing "undeclared function" errors.
-          cd kernel && git clean -fdx && cd ..
-
           cp susfs4ksu/kernel_patches/fs/susfs.c kernel/fs/
           cp susfs4ksu/kernel_patches/include/linux/susfs.h kernel/include/linux/
           cp susfs4ksu/kernel_patches/include/linux/susfs_def.h kernel/include/linux/
