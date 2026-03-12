@@ -530,7 +530,7 @@ jobs:
       # 16. Upload build artifact
       # -----------------------------------------------------------------------
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: kernel-kowsu
           path: ${{ env.KERNEL_ZIP }}
@@ -558,10 +558,10 @@ jobs:
     steps:
 
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download build artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: kernel-kowsu
           path: release-assets
