@@ -1,3 +1,4 @@
+
 name: Build GKI Kernel android16-6.12 - Xiaomi 17 Pro Max (popsicle)
 
 on:
@@ -149,7 +150,7 @@ jobs:
           df -h /
 
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
           key: ccache-${{ matrix.variant }}-${{ github.ref_name }}-${{ github.run_id }}
@@ -206,7 +207,7 @@ jobs:
           rm -rf AnyKernel3 release-assets changelogs || true
 
       - name: Checkout Workflow Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           clean: false
 
@@ -560,7 +561,7 @@ jobs:
           echo "KERNEL_ZIP=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: kernel-popsicle-${{ matrix.variant }}-${{ github.run_number }}
           path: |
@@ -573,10 +574,10 @@ jobs:
     if: always() && needs.setup.outputs.create_release == 'true' && needs.build.result != 'cancelled'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           path: release-assets
 
