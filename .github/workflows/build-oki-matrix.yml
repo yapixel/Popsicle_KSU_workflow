@@ -1,0 +1,720 @@
+name: Build OKI Kernel — KSU Matrix + SuSFS
+
+# =============================================================================
+# Build System : make (Clang 19 r536225 + ARM GNU 14.3.rel1)
+# Variants     : KowSU | KernelSU (tiann) | ReSukiSU — parallel matrix
+# Source       : cctv18/android_kernel_common_oneplus_sm8850 (OKI)
+# Target       : OnePlus (sm8850) — android16 / 6.12
+# =============================================================================
+
+on:
+  workflow_dispatch:
+    inputs:
+      android_version:
+        description: "Android version (e.g. android16)"
+        required: true
+        default: "android16"
+        type: string
+      kernel_version:
+        description: "Kernel version (e.g. 6.12)"
+        required: true
+        default: "6.12"
+        type: string
+      sub_level:
+        description: "Kernel sublevel (e.g. 23 for 6.12.23)"
+        required: true
+        default: "23"
+        type: string
+      os_patch_level:
+        description: "OS patch level (e.g. 2025-05-exp)"
+        required: true
+        default: "2025-05-exp"
+        type: string
+      create_release:
+        description: "Create GitHub Release"
+        required: false
+        default: true
+        type: boolean
+      debug:
+        description: "Enable verbose build output"
+        required: false
+        default: false
+        type: boolean
+      force_clean_build:
+        description: "Force clean build (make clean before build)"
+        required: false
+        default: false
+        type: boolean
+
+# Default to read-only; create_release job overrides to write
+permissions:
+  contents: read
+
+# ---------------------------------------------------------------------------
+# Global environment — shared across all jobs
+# ---------------------------------------------------------------------------
+env:
+  ANDROID_VERSION: ${{ github.event.inputs.android_version }}
+  KERNEL_VERSION:  ${{ github.event.inputs.kernel_version }}
+  SUB_LEVEL:       ${{ github.event.inputs.sub_level }}
+  OS_PATCH_LEVEL:  ${{ github.event.inputs.os_patch_level }}
+  KERNEL_ROOT:     ${{ github.workspace }}/android-kernel
+  DIST_DIR:        ${{ github.workspace }}/android-kernel/common/out
+  SCRIPTS_REPO:    https://github.com/TheSillyOk/sh
+  CCACHE_DIR:      ${{ github.workspace }}/.ccache
+
+# =============================================================================
+jobs:
+# =============================================================================
+
+  # ---------------------------------------------------------------------------
+  # setup — resolve SuSFS version and release tag once for all downstream jobs
+  # ---------------------------------------------------------------------------
+  setup:
+    name: Setup — Resolve Versions & Release Tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    outputs:
+      susfs_version:      ${{ steps.susfs_version.outputs.susfs_version }}
+      susfs_ver_clean:    ${{ steps.susfs_version.outputs.susfs_ver_clean }}
+      susfs_commit_short: ${{ steps.susfs_version.outputs.susfs_commit_short }}
+      susfs_commit_msg:   ${{ steps.susfs_version.outputs.susfs_commit_msg }}
+      susfs_build_tag:    ${{ steps.release_tag.outputs.susfs_build_tag }}
+
+    steps:
+
+      - name: Clone SuSFS
+        run: |
+          git clone  \
+            --branch="gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-dev" \
+            https://gitlab.com/simonpunk/susfs4ksu susfs4ksu
+
+          git -C susfs4ksu clean -fdx
+
+      - name: Resolve SuSFS version
+        id: susfs_version
+        run: |
+          SUSFS_VERSION=$(grep -oP 'SUSFS_VERSION "\K[^"]+' \
+            susfs4ksu/kernel_patches/include/linux/susfs.h 2>/dev/null \
+            || git -C susfs4ksu log -1 --format='%h')
+          SUSFS_VER_CLEAN="${SUSFS_VERSION#v}"
+
+          echo "susfs_version=$SUSFS_VERSION"                                 >> "$GITHUB_OUTPUT"
+          echo "susfs_ver_clean=$SUSFS_VER_CLEAN"                             >> "$GITHUB_OUTPUT"
+          echo "susfs_commit_short=$(git -C susfs4ksu log -1 --format='%h')" >> "$GITHUB_OUTPUT"
+          echo "susfs_commit_msg=$(git -C susfs4ksu log -1 --format='%s')"   >> "$GITHUB_OUTPUT"
+
+          echo "┌─────────────────────────────────────────┐"
+          echo "│  SuSFS Version : $SUSFS_VERSION"
+          echo "│  Commit        : $(git -C susfs4ksu log -1 --format='%h')"
+          echo "│  Message       : $(git -C susfs4ksu log -1 --format='%s')"
+          echo "└─────────────────────────────────────────┘"
+
+      - name: Resolve release tag
+        id: release_tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SUSFS_VERSION: ${{ steps.susfs_version.outputs.susfs_version }}
+        run: |
+          HIGHEST=$(gh release list \
+            --repo "${{ github.repository }}" \
+            --limit 100 \
+            --json tagName \
+            --jq "[.[] | select(.tagName | startswith(\"${SUSFS_VERSION}-r\")) | .tagName | ltrimstr(\"${SUSFS_VERSION}-r\") | tonumber] | max // 0")
+
+          SUSFS_BUILD_NUM=$(( HIGHEST + 1 ))
+
+          echo "susfs_build_tag=${SUSFS_VERSION}-r${SUSFS_BUILD_NUM}" >> "$GITHUB_OUTPUT"
+          echo "📌 Release tag: ${SUSFS_VERSION}-r${SUSFS_BUILD_NUM}"
+
+  # ---------------------------------------------------------------------------
+  # build — compile the kernel for each KSU variant in parallel
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build — ${{ matrix.variant.label }}
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+
+    outputs:
+      ksu_version: ${{ steps.ksu_version.outputs.ksu_version }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          # ── KowSU ──────────────────────────────────────────────────────
+          - name:           kowsu
+            label:          KowSU
+            enabled:        true
+            ksu_owner:      KOWX712
+            ksu_repo:       KernelSU
+            ksu_branch:     master
+            setup_url:      https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
+            susfs_core:     from_susfs4ksu
+            susfs_patch:    kowsu/10_enable_susfs_for_ksu.patch
+            susfs_patch_src: patches_dir
+
+          # ── KernelSU (official / tiann) ────────────────────────────────
+          - name:           tiannksu
+            label:          KernelSU
+            enabled:        true
+            ksu_owner:      tiann
+            ksu_repo:       KernelSU
+            ksu_branch:     main
+            setup_url:      https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh
+            susfs_core:     from_susfs4ksu
+            susfs_patch:    10_enable_susfs_for_ksu.patch
+            susfs_patch_src: susfs4ksu
+
+          # ── ReSukiSU ───────────────────────────────────────────────────
+          - name:           resukisu
+            label:          ReSukiSU
+            enabled:        true
+            ksu_owner:      ReSukiSU
+            ksu_repo:       ReSukiSU
+            ksu_branch:     main
+            setup_url:      https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh
+            susfs_core:     from_susfs4ksu
+            susfs_patch:    ""
+            susfs_patch_src: ""
+
+    env:
+      SUSFS_VERSION:      ${{ needs.setup.outputs.susfs_version }}
+      SUSFS_VER_CLEAN:    ${{ needs.setup.outputs.susfs_ver_clean }}
+      SUSFS_COMMIT_SHORT: ${{ needs.setup.outputs.susfs_commit_short }}
+      SUSFS_COMMIT_MSG:   ${{ needs.setup.outputs.susfs_commit_msg }}
+
+    steps:
+
+      # -----------------------------------------------------------------------
+      # 1. Reclaim disk space
+      # -----------------------------------------------------------------------
+      - name: Free disk space
+        run: |
+          echo "=== Disk before cleanup ===" && df -h /
+
+          sudo apt-get purge -yq \
+            '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' \
+            'php.*' '^mongodb-.*' '^mysql-.*' \
+            azure-cli google-cloud-cli google-chrome-stable \
+            firefox powershell mono-devel libgl1-mesa-dri \
+            'ghc-*' 'cabal-install' \
+            || true
+
+          sudo rm -rf \
+            /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/powershell \
+            /usr/share/swift /usr/local/.ghcup /usr/lib/jvm \
+            /usr/local/graalvm "$AGENT_TOOLSDIRECTORY" \
+            || true
+
+          docker image prune -af 2>/dev/null || true
+          sudo apt-get autoremove -yq
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          echo "=== Disk after cleanup ===" && df -h /
+
+      # -----------------------------------------------------------------------
+      # 2. Install host build dependencies
+      # -----------------------------------------------------------------------
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libssl-dev libelf-dev \
+            build-essential python3 python3-pip \
+            rsync curl wget git zip unzip aria2 \
+            libncurses-dev gawk dwarves zstd pahole \
+            ccache kmod
+
+          echo "✅ Host dependencies installed"
+
+      # -----------------------------------------------------------------------
+      # 3. Download Clang toolchain (r536225 / clang 19.0.1)
+      # -----------------------------------------------------------------------
+      - name: Download Clang Toolchain
+        run: |
+          mkdir -p $HOME/clang && cd $HOME/clang
+          wget -q https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz -O clang.tar.gz
+          tar -xzf clang.tar.gz && rm clang.tar.gz
+          echo "✅ $(bin/clang --version | head -1)"
+          echo "CLANG_BIN=$HOME/clang/bin" >> $GITHUB_ENV
+          echo "$HOME/clang/bin" >> $GITHUB_PATH
+
+      # -----------------------------------------------------------------------
+      # 4. Download AArch64 GNU toolchain (14.3.rel1)
+      # -----------------------------------------------------------------------
+      - name: Download AArch64 GNU Toolchain
+        run: |
+          mkdir -p $HOME/toolchains && cd $HOME/toolchains
+          wget -q https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz -O tc.tar.xz
+          tar -xJf tc.tar.xz && rm tc.tar.xz
+          TC_DIR=$(ls -d arm-gnu-toolchain-*aarch64*)
+          echo "ARM64_TOOLCHAIN=$HOME/toolchains/$TC_DIR/bin/aarch64-none-linux-gnu-" >> $GITHUB_ENV
+          echo "✅ AArch64 toolchain: $TC_DIR"
+
+      # -----------------------------------------------------------------------
+      # 4b. Download ARM32 GNU toolchain (14.3.rel1)
+      # -----------------------------------------------------------------------
+      - name: Download ARM32 GNU Toolchain
+        run: |
+          mkdir -p $HOME/toolchains && cd $HOME/toolchains
+          wget -q https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz -O tc-arm.tar.xz
+          tar -xJf tc-arm.tar.xz && rm tc-arm.tar.xz
+          TC_DIR=$(ls -d arm-gnu-toolchain-*arm-none-eabi*)
+          echo "ARM32_TOOLCHAIN=$HOME/toolchains/$TC_DIR/bin/arm-none-eabi-" >> $GITHUB_ENV
+          echo "✅ ARM32 toolchain: $TC_DIR"
+
+      # -----------------------------------------------------------------------
+      # 5. Download OKI kernel source
+      # -----------------------------------------------------------------------
+      - name: Sync kernel sources
+        run: |
+          mkdir -p "$KERNEL_ROOT" && cd "$KERNEL_ROOT"
+
+          echo "📥 Downloading OKI source..."
+          aria2c -s16 -x16 -k1M \
+            https://github.com/cctv18/android_kernel_common_oneplus_sm8850/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip \
+            -o common.zip
+          unzip -q common.zip
+          mv "android_kernel_common_oneplus_sm8850-oneplus-sm8850_v_16.0.0_oneplus_15" common
+          rm -f common.zip
+
+          echo "KERNEL_DIR=$KERNEL_ROOT/common" >> $GITHUB_ENV
+          echo "✅ OKI source ready" && df -h /
+
+      # -----------------------------------------------------------------------
+      # 6. Checkout this workflow repository
+      # -----------------------------------------------------------------------
+      - name: Checkout workflow repo
+        uses: actions/checkout@v6
+        with:
+          path: workflow-repo
+          clean: false
+
+      # -----------------------------------------------------------------------
+      # 7. Clone helper scripts, SuSFS, and yapixel/kernel_patches
+      # -----------------------------------------------------------------------
+      - name: Clone SuSFS and kernel_patches
+        run: |
+          SUSFS_PATH="$KERNEL_ROOT/../susfs4ksu"
+          PATCHES_PATH="$KERNEL_ROOT/../kernel_patches"
+
+          # ── Helper scripts ───────────────────────────────────────────────
+          git clone --depth=1 "${{ env.SCRIPTS_REPO }}" sh
+
+          # ── SuSFS ────────────────────────────────────────────────────────
+          if [ -d "$SUSFS_PATH/.git" ]; then
+            echo "♻️  Updating existing SuSFS clone..."
+            git -C "$SUSFS_PATH" fetch --depth=1 origin \
+              "gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-dev"
+            git -C "$SUSFS_PATH" reset --hard \
+              "origin/gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-dev"
+            git -C "$SUSFS_PATH" clean -fdx
+          else
+            git clone --depth=1 \
+              --branch="gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}-dev" \
+              https://gitlab.com/simonpunk/susfs4ksu "$SUSFS_PATH"
+          fi
+
+
+          # ── kernel_patches ───────────────────────────────────────────────
+          if [ -d "$PATCHES_PATH/.git" ]; then
+            echo "♻️  Updating existing kernel_patches clone..."
+            git -C "$PATCHES_PATH" pull --depth=1
+          else
+            git clone --depth=1 \
+              https://github.com/yapixel/kernel_patches.git "$PATCHES_PATH"
+          fi
+
+          # ── Export paths ─────────────────────────────────────────────────
+          {
+            echo "SUSFS_DIR=$(realpath "$SUSFS_PATH")"
+            echo "PATCHES_DIR=$(realpath "$PATCHES_PATH")"
+          } >> "$GITHUB_ENV"
+
+      # -----------------------------------------------------------------------
+      # 7. Integrate KSU variant via upstream setup.sh
+      # -----------------------------------------------------------------------
+      - name: Setup ${{ matrix.variant.label }}
+        working-directory: ${{ env.KERNEL_ROOT }}/common
+        run: |
+          rm -rf KernelSU drivers/kernelsu
+          echo "📥 Integrating ${{ matrix.variant.label }}..."
+          KERNEL_DIR="$GITHUB_WORKSPACE/android-kernel/common" \
+            bash <(curl -LSs "${{ matrix.variant.setup_url }}") \
+            ${{ matrix.variant.ksu_branch }}
+          echo "✅ ${{ matrix.variant.label }} integrated"
+
+      # -----------------------------------------------------------------------
+      # 8. Capture KSU version
+      #    KowSU / tiann : get_ksuver.sh owner/repo/branch from matrix
+      #    ReSukiSU      : extract_ksuver.sh (clones + runs make to eval formula)
+      # -----------------------------------------------------------------------
+      - name: Capture ${{ matrix.variant.label }} version info
+        id: ksu_version
+        run: |
+          KSU_DIR="$KERNEL_DIR/KernelSU"
+
+          if [ "${{ matrix.variant.name }}" = "resukisu" ]; then
+            # ── ReSukiSU — compute from local clone (30000 + count + 700) ─
+            # extract_ksuver.sh uses --depth 1 clone so rev-list returns 1;
+            # use the already-unshallowed local KernelSU clone instead.
+            cd "$KSU_DIR"
+            git fetch --unshallow --quiet \
+              || git fetch --depth=10000 --quiet \
+              || true
+            git fetch origin main:main --quiet || true
+            KSU_COUNT=$(git rev-list --count main)
+            KSU_VERSION=$((30000 + KSU_COUNT + 700))
+            echo "📌 ReSukiSU version: r$KSU_VERSION (count=$KSU_COUNT)"
+          else
+            # ── KowSU / tiann — get_ksuver.sh via GitHub API ────────────
+            KSU_VERSION=$(bash ./sh/get_ksuver.sh \
+              "${{ matrix.variant.ksu_owner }}" \
+              "${{ matrix.variant.ksu_repo }}" \
+              "${{ matrix.variant.ksu_branch }}" 2>/dev/null) || true
+          fi
+          if [ -z "$KSU_VERSION" ]; then
+            echo "❌ Failed to determine KSU version for ${{ matrix.variant.label }}"
+            exit 1
+          fi
+          echo "📌 ${{ matrix.variant.label }} version: r$KSU_VERSION"
+
+          {
+            echo "KSU_VERSION=$KSU_VERSION"
+            echo "KSU_COMMIT_SHORT=$(git -C '$KSU_DIR' log -1 --format='%h' 2>/dev/null || echo 'unknown')"
+            echo "KSU_COMMIT_MSG=$(git -C '$KSU_DIR' log -1 --format='%s' 2>/dev/null || echo 'unknown')"
+          } >> "$GITHUB_ENV"
+
+          echo "ksu_version=$KSU_VERSION" >> "$GITHUB_OUTPUT"
+
+      # -----------------------------------------------------------------------
+      # 9. Apply SuSFS patches
+      #    Logic differs per variant — see matrix for susfs_core / susfs_patch
+      # -----------------------------------------------------------------------
+      - name: Apply SuSFS patches
+        run: |
+          COMMON_DIR="$KERNEL_DIR"
+
+          # ── Always copy SuSFS source files from susfs4ksu ────────────────
+          cp "$SUSFS_DIR/kernel_patches/fs/"*            "$COMMON_DIR/fs/"
+          cp "$SUSFS_DIR/kernel_patches/include/linux/"* "$COMMON_DIR/include/linux/"
+
+          # ── Core SuSFS patch ─────────────────────────────────────────────
+          PATCH_NAME="50_add_susfs_in_gki-${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}.patch"
+
+          if [ "${{ matrix.variant.susfs_core }}" = "from_susfs4ksu" ]; then
+            cp "$SUSFS_DIR/kernel_patches/$PATCH_NAME" "$COMMON_DIR/"
+            cd "$COMMON_DIR"
+            echo "📋 Applying $PATCH_NAME (from susfs4ksu)..."
+            patch -p1 -F 3 < "$PATCH_NAME" \
+              || echo "⚠️  Core SuSFS patch failed or was already applied"
+          else
+            # from_susfs4ksu fallback (should not be reached with current variants)
+            cp "$SUSFS_DIR/kernel_patches/$PATCH_NAME" "$COMMON_DIR/"
+            cd "$COMMON_DIR"
+            echo "📋 Applying $PATCH_NAME (from susfs4ksu fallback)..."
+            patch -p1 -F 3 < "$PATCH_NAME" \
+              || echo "⚠️  Core SuSFS patch failed or was already applied"
+          fi
+
+          # ── KSU enablement patch (skip if empty — resukisu is SuSFS-ready) ─
+          if [ -n "${{ matrix.variant.susfs_patch }}" ]; then
+            cd "$COMMON_DIR/KernelSU"
+            PATCH_FILE="$(basename "${{ matrix.variant.susfs_patch }}")"
+            if [ "${{ matrix.variant.susfs_patch_src }}" = "susfs4ksu" ]; then
+              echo "📋 Applying $PATCH_FILE (from susfs4ksu/kernel_patches/KernelSU)..."
+              cp "$SUSFS_DIR/kernel_patches/KernelSU/$PATCH_FILE" ./
+            else
+              echo "📋 Applying ${{ matrix.variant.susfs_patch }} (from patches_dir)..."
+              cp "$PATCHES_DIR/${{ matrix.variant.susfs_patch }}" ./
+            fi
+            patch -p1 < "$PATCH_FILE" \
+              || { echo "❌ KSU SuSFS patch failed!"; exit 1; }
+          else
+            echo "ℹ️  ${{ matrix.variant.label }} is SuSFS-ready — skipping enablement patch"
+          fi
+
+      # -----------------------------------------------------------------------
+      # 10. Apply patches & source fixes
+      # -----------------------------------------------------------------------
+      - name: Apply source fixes
+        run: |
+          cd "$KERNEL_DIR"
+
+          # 0. Bypass GKI ABI symbol checks
+          echo "🚫 Removing GKI protected exports..."
+          rm -f android/abi_gki_protected_exports_* || true
+
+          # 1. Spoof scripts/mkcompile_h
+          sed -i \
+            's|"${LINUX_COMPILE_BY}"|"kleaf"|g;
+             s|"${LINUX_COMPILE_HOST}"|"build-host"|g;
+             s|"${CC_VERSION}, ${LD_VERSION}"|"Android (14043575, +pgo, +bolt, +lto, +mlgo, based on r536225) clang version 19.0.1 (https://android.googlesource.com/toolchain/llvm-project b3a530ec6537146650e42be89f1089e9a3588460), LLD 19.0.1"|g' \
+            scripts/mkcompile_h
+          echo "✅ mkcompile_h spoofed"
+
+          # 2. Spoof scripts/setlocalversion — replace with no-op
+          cat > scripts/setlocalversion << 'SETLOCALVERSION_EOF'
+          #!/bin/sh
+          echo ""
+          SETLOCALVERSION_EOF
+          chmod +x scripts/setlocalversion
+          echo "✅ setlocalversion spoofed"
+
+          # 3. Spoof init/Makefile — hardcode build-version and build-timestamp
+          sed -i \
+            's|^build-version = .*|build-version = 1|;
+             s|^build-timestamp = .*|build-timestamp = "Fri Sep 12 04:57:41 UTC 2025"|' \
+            init/Makefile
+          echo "✅ init/Makefile timestamp spoofed"
+
+          # 4. Fix libbpf.c type cast compilation error
+          if grep -q 'next_path = strchr' tools/lib/bpf/libbpf.c 2>/dev/null; then
+            sed -i 's/next_path = strchr(s, '"'"':'"'"');/next_path = (char *)strchr(s, '"'"':'"'"');/' \
+              tools/lib/bpf/libbpf.c
+            echo "🔧 libbpf.c type cast fixed"
+          fi
+
+      # -----------------------------------------------------------------------
+      # 11. Configure kernel
+      # -----------------------------------------------------------------------
+      - name: Configure kernel
+        run: |
+          cd "$KERNEL_DIR"
+          export ARCH=arm64
+          export CROSS_COMPILE="${{ env.ARM64_TOOLCHAIN }}"
+          export CROSS_COMPILE_COMPAT="${{ env.ARM32_TOOLCHAIN }}"
+
+          make ARCH=arm64 LLVM=1 LLVM_IAS=1 LD=ld.lld O=out gki_defconfig
+
+          cat << 'EOF' >> out/.config
+          CONFIG_ARCH_QCOM=y
+          CONFIG_ARM64_VA_BITS=52
+          CONFIG_ARM64_PA_BITS=52
+          CONFIG_SCHED_MC=y
+          CONFIG_ENERGY_MODEL=y
+          CONFIG_CPU_FREQ=y
+          CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
+          CONFIG_THERMAL=y
+          CONFIG_CMA=y
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_LTO_CLANG_THIN=y
+          CONFIG_IP_SET=y
+          CONFIG_NET_SCH_CAKE=y
+          CONFIG_KSU=y
+          CONFIG_KSU_KPROBES_HOOK=n
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          CONFIG_IP6_NF_MATCH_HL=y
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BIC=n
+          CONFIG_TCP_CONG_WESTWOOD=n
+          CONFIG_TCP_CONG_HTCP=n
+          CONFIG_BPF_STREAM_PARSER=y
+          CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+          CONFIG_NETFILTER_XT_SET=y
+          CONFIG_IP_SET_MAX=65534
+          CONFIG_IP_SET_BITMAP_IP=y
+          CONFIG_IP_SET_BITMAP_IPMAC=y
+          CONFIG_IP_SET_BITMAP_PORT=y
+          CONFIG_IP_SET_HASH_IP=y
+          CONFIG_IP_SET_HASH_IPMARK=y
+          CONFIG_IP_SET_HASH_IPPORT=y
+          CONFIG_IP_SET_HASH_IPPORTIP=y
+          CONFIG_IP_SET_HASH_IPPORTNET=y
+          CONFIG_IP_SET_HASH_IPMAC=y
+          CONFIG_IP_SET_HASH_MAC=y
+          CONFIG_IP_SET_HASH_NETPORTNET=y
+          CONFIG_IP_SET_HASH_NET=y
+          CONFIG_IP_SET_HASH_NETNET=y
+          CONFIG_IP_SET_HASH_NETPORT=y
+          CONFIG_IP_SET_HASH_NETIFACE=y
+          CONFIG_IP_SET_LIST_SET=y
+          CONFIG_IP6_NF_NAT=y
+          CONFIG_IP6_NF_TARGET_MASQUERADE=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_SU=n
+          CONFIG_LOCALVERSION="-android16-5-g6928909e3148-abogki444322847-4k"
+          CONFIG_DEBUG_INFO_BTF=n
+          CONFIG_DEBUG_INFO_BTF_MODULES=n
+          EOF
+
+          make ARCH=arm64 LLVM=1 LLVM_IAS=1 LD=ld.lld O=out olddefconfig
+          echo "✅ Kernel configured"
+
+      # -----------------------------------------------------------------------
+      # 12. Build kernel
+      # -----------------------------------------------------------------------
+      - name: Build kernel
+        run: |
+          cd "$KERNEL_DIR"
+          export ARCH=arm64
+          export CROSS_COMPILE="${{ env.ARM64_TOOLCHAIN }}"
+          export CROSS_COMPILE_COMPAT="${{ env.ARM32_TOOLCHAIN }}"
+          export CCACHE_DIR="${{ env.CCACHE_DIR }}"
+
+          [[ "${{ github.event.inputs.debug }}" == "true" ]] && set -x
+
+          START=$SECONDS
+          echo "🔨 Starting build — ${{ matrix.variant.label }} r$KSU_VERSION | SuSFS $SUSFS_VERSION"
+
+          make -j$(nproc) \
+            LLVM=1 LLVM_IAS=1 \
+            ARCH=arm64 \
+            CLANG_TRIPLE=aarch64-linux-gnu- \
+            CROSS_COMPILE="${{ env.ARM64_TOOLCHAIN }}" \
+            CROSS_COMPILE_COMPAT="${{ env.ARM32_TOOLCHAIN }}" \
+            CC="ccache clang" \
+            CXX="ccache clang++" \
+            KCFLAGS="-fno-stack-protector" \
+            LD=ld.lld \
+            HOSTLD=ld.lld \
+            O=out
+
+          echo "BUILD_TIME=$((SECONDS - START))s" >> $GITHUB_ENV
+          echo "✅ Build complete in $((SECONDS - START))s"
+
+      # 13. Verify build artifacts
+      # -----------------------------------------------------------------------
+      - name: Verify build artifacts
+        run: |
+          set -e
+          IMAGE="$KERNEL_DIR/out/arch/arm64/boot/Image"
+
+          if [ -f "$IMAGE" ]; then
+            echo "✅ Image ($(du -h "$IMAGE" | cut -f1))"
+          else
+            echo "❌ Missing: $IMAGE"
+            exit 1
+          fi
+
+          if [ -f "$KERNEL_DIR/out/vmlinux" ]; then
+            strings "$KERNEL_DIR/out/vmlinux" | grep -q "CONFIG_KSU=y" \
+              && echo "✅ CONFIG_KSU confirmed in vmlinux" \
+              || echo "⚠️  CONFIG_KSU not found in vmlinux"
+          fi
+
+      # -----------------------------------------------------------------------
+      # 14. Package into AnyKernel3 zip
+      # -----------------------------------------------------------------------
+      - name: Package (AnyKernel3)
+        run: |
+          FULL_VER="${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-${{ github.event.inputs.android_version }}-${{ github.event.inputs.os_patch_level }}"
+
+          git clone --depth=1 --branch=gki-2.0 \
+            https://github.com/WildKernels/AnyKernel3 AnyKernel3
+
+          cp "$KERNEL_DIR/out/arch/arm64/boot/Image" AnyKernel3/
+          [ -f "$KERNEL_DIR/out/arch/arm64/boot/dtb.img" ] && cp "$KERNEL_DIR/out/arch/arm64/boot/dtb.img" AnyKernel3/
+
+          cd AnyKernel3 && rm -rf .git .github
+          ZIP_NAME="AK3-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-${{ matrix.variant.label }}-r${KSU_VERSION}-SUSFS-${SUSFS_VER_CLEAN}.zip"
+          zip -r9 "../$ZIP_NAME" .
+          cd ..
+
+          echo "KERNEL_ZIP=$ZIP_NAME"     >> "$GITHUB_ENV"
+          echo "KERNEL_VERSION=$FULL_VER" >> "$GITHUB_ENV"
+          echo "📦 Packaged: $ZIP_NAME"
+
+
+      # -----------------------------------------------------------------------
+      # 15. Upload build artifact
+      # -----------------------------------------------------------------------
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: kernel-${{ matrix.variant.name }}
+          path: ${{ env.KERNEL_ZIP }}
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # create_release — collect all variant artifacts and publish one release
+  # ---------------------------------------------------------------------------
+  create_release:
+    name: Create Release
+    needs: [setup, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: >
+      always() &&
+      github.event.inputs.create_release == 'true' &&
+      needs.build.result == 'success'
+    permissions:
+      contents: write
+
+    env:
+      SUSFS_VERSION:   ${{ needs.setup.outputs.susfs_version }}
+      SUSFS_BUILD_TAG: ${{ needs.setup.outputs.susfs_build_tag }}
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download all variant artifacts
+        uses: actions/download-artifact@v6
+        with:
+          pattern: kernel-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        run: |
+          cd release-assets && ls -lh
+
+          RELEASE_TITLE="OKI ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }} | SuSFS ${SUSFS_BUILD_TAG}"
+
+          RELEASE_NOTES="**Build Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
+          **Kernel:** ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-${{ github.event.inputs.os_patch_level }}
+          **SuSFS:** ✅ Enabled (${SUSFS_BUILD_TAG})
+
+          ### Variants
+          | Variant    | ZIP |
+          |------------|-----|
+          | KowSU      | \`AK3-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-KowSU-r*-SUSFS-*.zip\` |
+          | KernelSU   | \`AK3-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-KernelSU-r*-SUSFS-*.zip\` |
+          | ReSukiSU   | \`AK3-${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}-ReSukiSU-r*-SUSFS-*.zip\` |
+
+          ### Sources
+          - **KowSU:** https://github.com/KOWX712/KernelSU
+          - **KernelSU:** https://github.com/tiann/KernelSU
+          - **ReSukiSU:** https://github.com/ReSukiSU/ReSukiSU
+          - **SuSFS:** https://gitlab.com/simonpunk/susfs4ksu
+
+          ### Supported Devices
+          - OnePlus (sm8850)
+
+          ### Installation
+          Flash the ZIP for your preferred variant via Kernel Flasher, or extract \`Image\` and patch \`boot.img\` manually."
+
+          echo "🏷️  Tag: ${SUSFS_BUILD_TAG}"
+          if [ -z "${SUSFS_BUILD_TAG}" ]; then
+            echo "❌ SUSFS_BUILD_TAG is empty!"; exit 1
+          fi
+
+          gh release create "${SUSFS_BUILD_TAG}" \
+            --title  "$RELEASE_TITLE" \
+            --notes  "$RELEASE_NOTES" \
+            --repo   "${{ github.repository }}" \
+            ./*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
