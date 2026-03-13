@@ -1,4 +1,3 @@
-
 name: Build GKI Kernel android16-6.12 - Xiaomi 17 Pro Max (popsicle)
 
 on:
@@ -207,7 +206,7 @@ jobs:
           rm -rf AnyKernel3 release-assets changelogs || true
 
       - name: Checkout Workflow Repo
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           clean: false
 
@@ -405,19 +404,20 @@ jobs:
             fi
 
             cd ..
+          fi
 
-            # Fallback: ensure fs/exec.c has the susfs_def header included.
-            # The 50_ patch adds #include <linux/susfs_def.h> to fs/exec.c (NOT susfs.h).
-            # susfs_is_current_proc_umounted() is declared in susfs_def.h.
-            # If the include hunk failed but the call hunk applied, inject it manually.
-            if grep -q "susfs_is_current_proc_umounted\|susfs_is_current_proc_app_profile" fs/exec.c; then
-              if ! grep -q '#include <linux/susfs_def.h>' fs/exec.c; then
-                echo "🔧 Injecting missing #include <linux/susfs_def.h> into fs/exec.c..."
-                sed -i '/#include <linux\/ksm.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/exec.c
-                echo "✅ susfs_def.h injected into fs/exec.c"
-              else
-                echo "✅ fs/exec.c already has susfs_def.h included"
-              fi
+          # Fallback for ALL variants: ensure fs/exec.c has susfs_def.h included.
+          # The 50_ patch adds #include <linux/susfs_def.h> to fs/exec.c.
+          # susfs_is_current_proc_umounted() is declared in susfs_def.h.
+          # If the include hunk failed but the call hunk applied (partial patch),
+          # inject it manually — applies to both kowsu and resukisu.
+          if grep -q "susfs_is_current_proc_umounted\|susfs_is_current_proc_app_profile" fs/exec.c; then
+            if ! grep -q '#include <linux/susfs_def.h>' fs/exec.c; then
+              echo "🔧 Injecting missing #include <linux/susfs_def.h> into fs/exec.c..."
+              sed -i '/#include <linux\/ksm.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' fs/exec.c
+              echo "✅ susfs_def.h injected into fs/exec.c"
+            else
+              echo "✅ fs/exec.c already has susfs_def.h included"
             fi
           fi
 
@@ -490,6 +490,7 @@ jobs:
 
           if [ "${{ env.ENABLE_SUSFS }}" = "true" ]; then
             cat << 'EOF' >> out/.config
+           # KernelSU SUSFS Configuration
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
           CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -565,7 +566,7 @@ jobs:
           echo "KERNEL_ZIP=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: kernel-popsicle-${{ matrix.variant }}-${{ github.run_number }}
           path: |
@@ -578,10 +579,10 @@ jobs:
     if: always() && needs.setup.outputs.create_release == 'true' && needs.build.result != 'cancelled'
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Download All Artifacts
-        uses: actions/download-artifact@v6
+        uses: actions/download-artifact@v8
         with:
           path: release-assets
 
@@ -598,7 +599,7 @@ jobs:
           RELEASE_NOTES="**Build Date:** $(date)
           **Device:** Xiaomi 17 Pro Max (popsicle)
           **SoC:** Snapdragon 8 Elite Gen 5 (SM8850-AC)
-          **Kernel:** GKI android16-6.12 (2025-05-exp) (2025-05-exp)
+          **Kernel:** GKI android16-6.12 (2025-05-exp)
           **SuSFS:** ${{ inputs.disable_susfs == true && '❌ Disabled' || '✅ Enabled' }}
 
           ### Variants
