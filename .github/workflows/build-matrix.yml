@@ -343,38 +343,23 @@ jobs:
           echo "✅ ${{ matrix.variant.label }} integrated"
 
       # -----------------------------------------------------------------------
-      # 8. Capture KSU version
-      #    KowSU / tiann : get_ksuver.sh owner/repo/branch from matrix
-      #    ReSukiSU      : local commit count — 40000 + count - 2815
+      # 8. Capture KSU version — get_ksuver.sh owner/repo/branch from matrix
       # -----------------------------------------------------------------------
       - name: Capture ${{ matrix.variant.label }} version info
         id: ksu_version
         run: |
           KSU_DIR="$KERNEL_ROOT/common/KernelSU"
 
-          if [ "${{ matrix.variant.name }}" = "resukisu" ]; then
-            # ── ReSukiSU — local commit count formula ───────────────────
-            cd "$KSU_DIR"
-            git fetch --unshallow --quiet \
-              || git fetch --depth=10000 --quiet \
-              || true
-            git fetch origin main:main --quiet || true
-            KSU_COUNT=$(git rev-list --count main)
-            KSU_VERSION=$((40000 + KSU_COUNT - 2815))
-            echo "📌 ReSukiSU version: r$KSU_VERSION (count=$KSU_COUNT)"
-          else
-            # ── KowSU / tiann — get_ksuver.sh against variant's own repo ─
-            KSU_VERSION=$(./sh/get_ksuver.sh \
-              "${{ matrix.variant.ksu_owner }}" \
-              "${{ matrix.variant.ksu_repo }}" \
-              "${{ matrix.variant.ksu_branch }}" \
-              || echo "unknown")
-            if [ -z "$KSU_VERSION" ] || [ "$KSU_VERSION" = "unknown" ]; then
-              echo "❌ Failed to determine KSU version for ${{ matrix.variant.label }}"
-              exit 1
-            fi
-            echo "📌 ${{ matrix.variant.label }} version: r$KSU_VERSION"
+          KSU_VERSION=$(./sh/get_ksuver.sh \
+            "${{ matrix.variant.ksu_owner }}" \
+            "${{ matrix.variant.ksu_repo }}" \
+            "${{ matrix.variant.ksu_branch }}" \
+            || echo "unknown")
+          if [ -z "$KSU_VERSION" ] || [ "$KSU_VERSION" = "unknown" ]; then
+            echo "❌ Failed to determine KSU version for ${{ matrix.variant.label }}"
+            exit 1
           fi
+          echo "📌 ${{ matrix.variant.label }} version: r$KSU_VERSION
 
           {
             echo "KSU_VERSION=$KSU_VERSION"
@@ -419,8 +404,8 @@ jobs:
             cd "$COMMON_DIR/KernelSU"
             PATCH_FILE="$(basename "${{ matrix.variant.susfs_patch }}")"
             if [ "${{ matrix.variant.susfs_patch_src }}" = "susfs4ksu" ]; then
-              echo "📋 Applying $PATCH_FILE (from susfs4ksu)..."
-              cp "$SUSFS_DIR/kernel_patches/$PATCH_FILE" ./
+              echo "📋 Applying $PATCH_FILE (from susfs4ksu/kernel_patches/KernelSU)..."
+              cp "$SUSFS_DIR/kernel_patches/KernelSU/$PATCH_FILE" ./
             else
               echo "📋 Applying ${{ matrix.variant.susfs_patch }} (from patches_dir)..."
               cp "$PATCHES_DIR/${{ matrix.variant.susfs_patch }}" ./
