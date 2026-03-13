@@ -353,31 +353,34 @@ jobs:
           KSU_DIR="$KERNEL_ROOT/common/KernelSU"
 
           if [ "${{ matrix.variant.name }}" = "resukisu" ]; then
-            # ── ReSukiSU — extract_ksuver.sh handles multi-variable formula ─
-            KSU_VERSION=$(./sh/extract_ksuver.sh \
-              "https://github.com/${{ matrix.variant.ksu_owner }}/${{ matrix.variant.ksu_repo }}.git" \
-              "kernel/Makefile" \
-              "kernel" \
-              "${{ matrix.variant.ksu_branch }}" \
-              || echo "unknown")
+            # ── ReSukiSU — compute from local clone (30000 + count + 700) ─
+            # extract_ksuver.sh uses --depth 1 clone so rev-list returns 1;
+            # use the already-unshallowed local KernelSU clone instead.
+            cd "$KSU_DIR"
+            git fetch --unshallow --quiet \
+              || git fetch --depth=10000 --quiet \
+              || true
+            git fetch origin main:main --quiet || true
+            KSU_COUNT=$(git rev-list --count main)
+            KSU_VERSION=$((30000 + KSU_COUNT + 700))
+            echo "📌 ReSukiSU version: r$KSU_VERSION (count=$KSU_COUNT)"
           else
             # ── KowSU / tiann — get_ksuver.sh via GitHub API ────────────
-            KSU_VERSION=$(./sh/get_ksuver.sh \
+            KSU_VERSION=$(bash ./sh/get_ksuver.sh \
               "${{ matrix.variant.ksu_owner }}" \
               "${{ matrix.variant.ksu_repo }}" \
-              "${{ matrix.variant.ksu_branch }}" \
-              || echo "unknown")
+              "${{ matrix.variant.ksu_branch }}" 2>/dev/null) || true
           fi
-          if [ -z "$KSU_VERSION" ] || [ "$KSU_VERSION" = "unknown" ]; then
+          if [ -z "$KSU_VERSION" ]; then
             echo "❌ Failed to determine KSU version for ${{ matrix.variant.label }}"
             exit 1
           fi
-          echo "📌 ${{ matrix.variant.label }} version: r$KSU_VERSION""
+          echo "📌 ${{ matrix.variant.label }} version: r$KSU_VERSION"
 
           {
             echo "KSU_VERSION=$KSU_VERSION"
-            echo "KSU_COMMIT_SHORT=$(git -C "$KSU_DIR" log -1 --format='%h' 2>/dev/null || echo 'unknown')"
-            echo "KSU_COMMIT_MSG=$(git -C "$KSU_DIR" log -1 --format='%s' 2>/dev/null || echo 'unknown')"
+            echo "KSU_COMMIT_SHORT=$(git -C '$KSU_DIR' log -1 --format='%h' 2>/dev/null || echo 'unknown')"
+            echo "KSU_COMMIT_MSG=$(git -C '$KSU_DIR' log -1 --format='%s' 2>/dev/null || echo 'unknown')"
           } >> "$GITHUB_ENV"
 
           echo "ksu_version=$KSU_VERSION" >> "$GITHUB_OUTPUT"
