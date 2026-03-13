@@ -144,6 +144,9 @@ jobs:
             ksu_owner:      KOWX712
             ksu_repo:       KernelSU
             ksu_branch:     master
+            ksu_ver_owner:  backslashxx
+            ksu_ver_repo:   KernelSU
+            ksu_ver_branch: master
             setup_url:      https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
             susfs_core:     from_susfs4ksu
             susfs_patch:    kowsu/10_enable_susfs_for_ksu.patch
@@ -156,6 +159,9 @@ jobs:
             ksu_owner:      tiann
             ksu_repo:       KernelSU
             ksu_branch:     main
+            ksu_ver_owner:  backslashxx
+            ksu_ver_repo:   KernelSU
+            ksu_ver_branch: main
             setup_url:      https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh
             susfs_core:     from_susfs4ksu
             susfs_patch:    10_enable_susfs_for_ksu.patch
@@ -344,7 +350,7 @@ jobs:
 
       # -----------------------------------------------------------------------
       # 8. Capture KSU version
-      #    KowSU / tiann : get_ksuver.sh against variant's own owner/repo/branch
+      #    KowSU / tiann : get_ksuver.sh against backslashxx/KernelSU
       #    ReSukiSU      : local commit count formula — 40000 + count - 2815
       # -----------------------------------------------------------------------
       - name: Capture ${{ matrix.variant.label }} version info
@@ -363,11 +369,11 @@ jobs:
             KSU_VERSION=$((40000 + KSU_COUNT - 2815))
             echo "📌 ReSukiSU version: r$KSU_VERSION (count=$KSU_COUNT)"
           else
-            # ── KowSU / KernelSU (tiann) — get_ksuver.sh against variant's own repo ─
+            # ── KowSU / KernelSU (tiann) — get_ksuver.sh against backslashxx/KernelSU ─
             KSU_VERSION=$(./sh/get_ksuver.sh \
-              "${{ matrix.variant.ksu_owner }}" \
-              "${{ matrix.variant.ksu_repo }}" \
-              "${{ matrix.variant.ksu_branch }}" \
+              "${{ matrix.variant.ksu_ver_owner }}" \
+              "${{ matrix.variant.ksu_ver_repo }}" \
+              "${{ matrix.variant.ksu_ver_branch }}" \
               || echo "unknown")
 
             if [ -z "$KSU_VERSION" ] || [ "$KSU_VERSION" = "unknown" ]; then
