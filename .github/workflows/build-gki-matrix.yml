@@ -138,26 +138,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        exclude:
-          - variant:
-              enabled: 'false'
         variant:
           # ── KowSU ──────────────────────────────────────────────────────
-          - name:           kowsu
-            label:          KowSU
-            enabled:        'true'
-            ksu_owner:      KOWX712
-            ksu_repo:       KernelSU
-            ksu_branch:     master
-            setup_url:      https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
-            susfs_core:     from_susfs4ksu
-            susfs_patch:    kowsu/10_enable_susfs_for_ksu.patch
-            susfs_patch_src: patches_dir
+#          - name:           kowsu
+#            label:          KowSU
+#            ksu_owner:      KOWX712
+#            ksu_repo:       KernelSU
+#            ksu_branch:     master
+#            setup_url:      https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
+#            susfs_core:     from_susfs4ksu
+#            susfs_patch:    kowsu/10_enable_susfs_for_ksu.patch
+#            susfs_patch_src: patches_dir
 
           # ── KernelSU (official / tiann) ────────────────────────────────
           - name:           tiannksu
             label:          KernelSU
-            enabled:        'true'
             ksu_owner:      tiann
             ksu_repo:       KernelSU
             ksu_branch:     main
@@ -169,7 +164,6 @@ jobs:
           # ── ReSukiSU ───────────────────────────────────────────────────
           - name:           resukisu
             label:          ReSukiSU
-            enabled:        'true'
             ksu_owner:      ReSukiSU
             ksu_repo:       ReSukiSU
             ksu_branch:     main
