@@ -138,11 +138,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        exclude:
+          - variant:
+              enabled: false
         variant:
           # ── KowSU ──────────────────────────────────────────────────────
           - name:           kowsu
             label:          KowSU
-            enabled:        false
+            enabled:        true
             ksu_owner:      KOWX712
             ksu_repo:       KernelSU
             ksu_branch:     master
