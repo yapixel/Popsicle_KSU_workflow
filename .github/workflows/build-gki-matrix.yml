@@ -131,7 +131,6 @@ jobs:
     needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 300
-    if: ${{ matrix.variant.enabled == true }}
 
     outputs:
       ksu_version: ${{ steps.ksu_version.outputs.ksu_version }}
@@ -139,11 +138,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        exclude:
+          - variant:
+              enabled: 'false'
         variant:
           # ── KowSU ──────────────────────────────────────────────────────
           - name:           kowsu
             label:          KowSU
-            enabled:        true
+            enabled:        'true'
             ksu_owner:      KOWX712
             ksu_repo:       KernelSU
             ksu_branch:     master
@@ -155,7 +157,7 @@ jobs:
           # ── KernelSU (official / tiann) ────────────────────────────────
           - name:           tiannksu
             label:          KernelSU
-            enabled:        true
+            enabled:        'true'
             ksu_owner:      tiann
             ksu_repo:       KernelSU
             ksu_branch:     main
@@ -167,7 +169,7 @@ jobs:
           # ── ReSukiSU ───────────────────────────────────────────────────
           - name:           resukisu
             label:          ReSukiSU
-            enabled:        true
+            enabled:        'true'
             ksu_owner:      ReSukiSU
             ksu_repo:       ReSukiSU
             ksu_branch:     main
