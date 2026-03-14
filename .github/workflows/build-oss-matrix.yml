@@ -548,24 +548,27 @@ jobs:
           done
 
           # ── KernelSU configs ─────────────────────────────────────────────
-          cat >> "$DEFCONFIG" << 'KSUEOF'
-CONFIG_KSU=y
-CONFIG_KSU_KPROBES_HOOK=n
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=y
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-CONFIG_KSU_SUSFS_SUS_SU=n
-CONFIG_DEBUG_INFO_BTF=n
-CONFIG_DEBUG_INFO_BTF_MODULES=n
-CONFIG_LOCALVERSION="-android16-5-g6928909e3148-abogki444322847-4k"
-KSUEOF
+          for cfg in \
+            CONFIG_KSU=y \
+            CONFIG_KSU_KPROBES_HOOK=n \
+            CONFIG_KSU_SUSFS=y \
+            CONFIG_KSU_SUSFS_SUS_PATH=y \
+            CONFIG_KSU_SUSFS_SUS_MOUNT=y \
+            CONFIG_KSU_SUSFS_SUS_KSTAT=y \
+            CONFIG_KSU_SUSFS_SUS_OVERLAYFS=n \
+            CONFIG_KSU_SUSFS_SPOOF_UNAME=y \
+            CONFIG_KSU_SUSFS_ENABLE_LOG=y \
+            CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y \
+            CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y \
+            CONFIG_KSU_SUSFS_OPEN_REDIRECT=y \
+            CONFIG_KSU_SUSFS_SUS_SU=n \
+            CONFIG_DEBUG_INFO_BTF=n \
+            CONFIG_DEBUG_INFO_BTF_MODULES=n; do
+            key="${cfg%%=*}"
+            sed -i -E "s/.*${key}=.*$/# ${key} removed by CI/g" "$DEFCONFIG"
+            echo "$cfg" >> "$DEFCONFIG"
+          done
+          echo 'CONFIG_LOCALVERSION="-android16-5-g6928909e3148-abogki444322847-4k"' >> "$DEFCONFIG"
 
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 LD=ld.lld O=out gki_defconfig
           make ARCH=arm64 LLVM=1 LLVM_IAS=1 LD=ld.lld O=out olddefconfig
