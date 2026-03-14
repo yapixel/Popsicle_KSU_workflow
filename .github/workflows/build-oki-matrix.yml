@@ -147,15 +147,15 @@ jobs:
       matrix:
         variant:
           # ── KowSU — comment/uncomment to disable/enable ────────────────
-          - name:           kowsu
-            label:          KowSU
-            ksu_owner:      KOWX712
-            ksu_repo:       KernelSU
-            ksu_branch:     master
-            setup_url:      https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
-            susfs_core:     from_susfs4ksu
-            susfs_patch:    kowsu/10_enable_susfs_for_ksu.patch
-            susfs_patch_src: patches_dir
+#          - name:           kowsu
+#            label:          KowSU
+#            ksu_owner:      KOWX712
+#            ksu_repo:       KernelSU
+#            ksu_branch:     master
+#            setup_url:      https://raw.githubusercontent.com/KOWX712/KernelSU/master/kernel/setup.sh
+#            susfs_core:     from_susfs4ksu
+#            susfs_patch:    kowsu/10_enable_susfs_for_ksu.patch
+#            susfs_patch_src: patches_dir
 
           # ── KSU (official / tiann) — comment/uncomment to disable/enable ─
           - name:           tiannksu
