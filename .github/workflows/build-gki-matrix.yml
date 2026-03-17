@@ -455,8 +455,13 @@ jobs:
           echo "✅ mkcompile_h patched"
 
           # ── scripts/setlocalversion — fix local version string ───────────
-          sed -i \
-            's|^echo "\$res"|#echo "$res"\necho "-android16-5-g6928909e3148-abogki444322847-4k"|' \
+          # FIX: replace only the last echo "$res" line using sed $ address,
+          # then strip the dynamic ${scm_version} suffix so nothing appends
+          # on top of the spoofed string.
+          LOCALVERSION="-android16-5-g6928909e3148-abogki444322847-4k"
+          sed -i "\$s|echo \"\\\$res\"|echo \"${LOCALVERSION}\"|" \
+            "$COMMON_DIR/scripts/setlocalversion"
+          sed -i 's/${scm_version}//' \
             "$COMMON_DIR/scripts/setlocalversion"
           echo "✅ setlocalversion patched"
 
@@ -562,6 +567,11 @@ jobs:
             'CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y' \
             'CONFIG_KSU_SUSFS_OPEN_REDIRECT=y' \
             'CONFIG_KSU_SUSFS_SUS_SU=n' \
+            >> "$FRAGMENT"
+
+          # ── Localversion — prevent Kbuild from appending git suffix ──────
+          printf '%s\n' \
+            'CONFIG_LOCALVERSION_AUTO=n' \
             >> "$FRAGMENT"
 
           echo "📝 Fragment written:" && cat "$FRAGMENT"
