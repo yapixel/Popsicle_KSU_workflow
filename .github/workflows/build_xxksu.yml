@@ -55,22 +55,30 @@ env:
   KSU_BRANCH: master
 
 jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Compute source matrix
+        id: set-matrix
+        run: |
+          INPUT="${{ github.event.inputs.kernel_source }}"
+          if [ "$INPUT" = "all" ]; then
+            echo 'matrix=["gki","oki","oss"]' >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=[\"$INPUT\"]" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: setup
     runs-on: ubuntu-latest
     timeout-minutes: 180
 
     strategy:
       fail-fast: false
       matrix:
-        source:
-          - gki
-          - oki
-          - oss
-    
-    # Skip matrix entries not selected by the input
-    if: >-
-      ${{ github.event.inputs.kernel_source == 'all' ||
-          github.event.inputs.kernel_source == matrix.source }}
+        source: ${{ fromJson(needs.setup.outputs.matrix) }}
 
     steps:
       - name: Checkout Workflow Repo
