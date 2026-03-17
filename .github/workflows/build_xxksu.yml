@@ -445,26 +445,37 @@ jobs:
           name: kernel-popsicle-${{ matrix.source }}-xxksu-${{ github.run_number }}
           path: ${{ env.KERNEL_ZIP }}
 
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_release == 'true'
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kernel-popsicle-*-xxksu-${{ github.run_number }}
+          merge-multiple: true
+          path: zips
+
       - name: Create GitHub Release
-        if: github.event.inputs.create_release == 'true'
         run: |
           KERNEL_VERSION="${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}"
-          SOURCE_UPPER=$(echo "${{ matrix.source }}" | tr '[:lower:]' '[:upper:]')
 
           RELEASE_NOTES="**Build Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
           **Device:** Xiaomi 17 Pro Max (popsicle)
           **SoC:** Snapdragon 8 Elite Gen 5 (SM8850-AC)
-          **Kernel Source:** ${SOURCE_UPPER}
+          **Kernel Sources:** ${{ github.event.inputs.kernel_source }}
           **Kernel:** ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} (${KERNEL_VERSION} / ${{ github.event.inputs.os_patch_level }})
-          **KernelSU:** xxKSU r${{ env.KSU_VERSION }} (${{ env.KSU_COMMIT }})
+          **KernelSU:** xxKSU
           **SuSFS:** None
 
           Flash ZIP in Kernel Flasher or extract Image to patch boot.img manually."
 
-          gh release create "popsicle-${{ matrix.source }}-xxksu-${{ github.run_number }}" \
-            --title "${SOURCE_UPPER} ${KERNEL_VERSION} popsicle xxKSU Build #${{ github.run_number }}" \
+          gh release create "popsicle-xxksu-${{ github.run_number }}" \
+            --title "popsicle xxKSU ${KERNEL_VERSION} Build #${{ github.run_number }}" \
             --notes "$RELEASE_NOTES" \
             --repo "${{ github.repository }}" \
-            "${{ env.KERNEL_ZIP }}"
+            zips/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
