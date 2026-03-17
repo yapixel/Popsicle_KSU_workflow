@@ -295,13 +295,16 @@ jobs:
             scripts/mkcompile_h
           echo "✅ mkcompile_h spoofed"
 
-          # 2. Spoof scripts/setlocalversion — no-op
-          cat > scripts/setlocalversion << 'SETLOCALVERSION_EOF'
-          #!/bin/sh
-          echo ""
-          SETLOCALVERSION_EOF
-          chmod +x scripts/setlocalversion
-          echo "✅ setlocalversion spoofed"
+          # 2. Spoof scripts/setlocalversion — output the fixed version string,
+          #    strip the dynamic ${scm_version} suffix so nothing appends on top.
+          #    FIX: was a heredoc with leading whitespace (broken shebang) that
+          #    emitted an empty string; now correctly patches the last echo line.
+          LOCALVERSION="-android16-5-g6928909e3148-abogki444322847-4k"
+          sed -i "\$s|echo \"\\\$res\"|echo \"${LOCALVERSION}\"|" \
+            scripts/setlocalversion
+          sed -i 's/${scm_version}//' \
+            scripts/setlocalversion
+          echo "✅ setlocalversion patched"
 
           # 3. Spoof init/Makefile timestamp
           sed -i \
@@ -376,6 +379,7 @@ jobs:
           CONFIG_KSU_KPROBES_HOOK=n
           CONFIG_KSU_LSM_SECURITY_HOOKS=y
           CONFIG_LOCALVERSION="-android16-5-g6928909e3148-abogki444322847-4k"
+          CONFIG_LOCALVERSION_AUTO=n
           CONFIG_DEBUG_INFO_BTF=n
           CONFIG_DEBUG_INFO_BTF_MODULES=n
           EOF
