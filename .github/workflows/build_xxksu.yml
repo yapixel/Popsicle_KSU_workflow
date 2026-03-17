@@ -1,4 +1,4 @@
-name: Build GKI Kernel android16-6.12 - xxKSU - Xiaomi 17 Pro Max (popsicle)
+name: Build Kernel android16-6.12 - xxKSU - Xiaomi 17 Pro Max (popsicle)
 
 on:
   workflow_dispatch:
@@ -23,6 +23,16 @@ on:
         required: true
         default: '2025-05-exp'
         type: string
+      kernel_source:
+        description: 'Kernel source(s) to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - gki
+          - oki
+          - oss
       force_clean_build:
         description: 'Force clean build (ignore cache)'
         required: false
@@ -48,6 +58,19 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 180
+
+    strategy:
+      fail-fast: false
+      matrix:
+        source:
+          - gki
+          - oki
+          - oss
+    
+    # Skip matrix entries not selected by the input
+    if: >-
+      ${{ github.event.inputs.kernel_source == 'all' ||
+          github.event.inputs.kernel_source == matrix.source }}
 
     steps:
       - name: Checkout Workflow Repo
@@ -94,12 +117,12 @@ jobs:
             bc bison flex libssl-dev libelf-dev \
             build-essential binutils-aarch64-linux-gnu \
             python3 python3-pip rsync \
-            ccache curl zip unzip git \
+            ccache curl zip unzip git aria2 \
             libncurses-dev gawk openssl \
             dwarves zstd pahole
           echo "✅ Dependencies installed"
 
-          # Install repo tool
+          # Install repo tool (only needed for GKI, installed unconditionally)
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
           chmod a+x /usr/local/bin/repo
           echo "✅ repo $(repo --version 2>&1 | head -1) installed"
@@ -107,15 +130,14 @@ jobs:
           echo "=== Disk after apt install ==="
           df -h /
 
-
       - name: Restore ccache
         uses: actions/cache@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-xxksu-${{ github.ref_name }}-${{ github.run_id }}
+          key: ccache-xxksu-${{ matrix.source }}-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: |
-            ccache-xxksu-${{ github.ref_name }}-
-            ccache-xxksu-
+            ccache-xxksu-${{ matrix.source }}-${{ github.ref_name }}-
+            ccache-xxksu-${{ matrix.source }}-
 
       - name: Configure ccache
         run: |
@@ -151,7 +173,12 @@ jobs:
           echo "ARM32_TOOLCHAIN=$HOME/toolchains/$TC_DIR/bin/arm-none-eabi-" >> $GITHUB_ENV
           echo "✅ ARM32 toolchain: $TC_DIR"
 
-      - name: Sync Kernel Sources
+      # -----------------------------------------------------------------------
+      # Sync kernel sources — strategy differs per matrix.source
+      # -----------------------------------------------------------------------
+
+      - name: Sync Kernel Sources (GKI)
+        if: matrix.source == 'gki'
         run: |
           ANDROID_VERSION="${{ github.event.inputs.android_version }}"
           KERNEL_VERSION="${{ github.event.inputs.kernel_version }}"
@@ -166,7 +193,6 @@ jobs:
             -u https://android.googlesource.com/kernel/manifest \
             -b "common-${FORMATTED_BRANCH}"
 
-          # Rewrite manifest if upstream has deprecated the branch
           REMOTE_REF=$(git ls-remote \
             https://android.googlesource.com/kernel/common \
             "${FORMATTED_BRANCH}" || true)
@@ -182,8 +208,36 @@ jobs:
             -c -j$(nproc --all) \
             --no-tags --fail-fast --force-sync --no-clone-bundle
 
-          echo "✅ Kernel workspace synced" && df -h /
+          echo "✅ GKI kernel workspace synced" && df -h /
           echo "KERNEL_DIR=${{ env.KERNEL_ROOT }}/common" >> $GITHUB_ENV
+
+      - name: Sync Kernel Sources (OKI)
+        if: matrix.source == 'oki'
+        run: |
+          mkdir -p "${{ env.KERNEL_ROOT }}" && cd "${{ env.KERNEL_ROOT }}"
+          echo "📥 Downloading OKI source..."
+          aria2c -s16 -x16 -k1M \
+            https://github.com/cctv18/android_kernel_common_oneplus_sm8850/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip \
+            -o common.zip
+          unzip -q common.zip
+          mv "android_kernel_common_oneplus_sm8850-oneplus-sm8850_v_16.0.0_oneplus_15" common
+          rm -f common.zip
+          echo "KERNEL_DIR=${{ env.KERNEL_ROOT }}/common" >> $GITHUB_ENV
+          echo "✅ OKI source ready" && df -h /
+
+      - name: Sync Kernel Sources (OSS)
+        if: matrix.source == 'oss'
+        run: |
+          mkdir -p "${{ env.KERNEL_ROOT }}" && cd "${{ env.KERNEL_ROOT }}"
+          echo "📥 Downloading OnePlus OSS source..."
+          aria2c -s16 -x16 -k1M \
+            https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8850/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip \
+            -o common.zip
+          unzip -q common.zip
+          mv android_kernel_common_oneplus_sm8850-* common
+          rm -f common.zip
+          echo "KERNEL_DIR=${{ env.KERNEL_ROOT }}/common" >> $GITHUB_ENV
+          echo "✅ OnePlus OSS source ready" && df -h /
 
       - name: Setup xxKSU
         run: |
@@ -225,8 +279,7 @@ jobs:
           echo "🚫 Removing GKI protected exports..."
           rm -f android/abi_gki_protected_exports_* || true
 
-          # 1. Spoof scripts/mkcompile_h — hardcode LINUX_COMPILE_BY, HOST, and
-          #    the full compiler banner with +pgo +bolt +lto +mlgo flags.
+          # 1. Spoof scripts/mkcompile_h
           sed -i \
             's|"${LINUX_COMPILE_BY}"|"kleaf"|g;
              s|"${LINUX_COMPILE_HOST}"|"build-host"|g;
@@ -234,8 +287,7 @@ jobs:
             scripts/mkcompile_h
           echo "✅ mkcompile_h spoofed"
 
-          # 2. Spoof scripts/setlocalversion — replace entirely with a no-op that
-          #    outputs nothing, so CONFIG_LOCALVERSION is the sole suffix.
+          # 2. Spoof scripts/setlocalversion — no-op
           cat > scripts/setlocalversion << 'SETLOCALVERSION_EOF'
           #!/bin/sh
           echo ""
@@ -243,14 +295,14 @@ jobs:
           chmod +x scripts/setlocalversion
           echo "✅ setlocalversion spoofed"
 
-          # 3. Spoof init/Makefile — hardcode build-version and build-timestamp.
+          # 3. Spoof init/Makefile timestamp
           sed -i \
             's|^build-version = .*|build-version = 1|;
              s|^build-timestamp = .*|build-timestamp = "Fri Sep 12 04:57:41 UTC 2025"|' \
             init/Makefile
           echo "✅ init/Makefile timestamp spoofed"
 
-          # 2. Fix libbpf.c type cast compilation error
+          # 4. Fix libbpf.c type cast compilation error
           echo "🔧 Patching libbpf.c..."
           sed -i 's/next_path = strchr(s, '"'"':'"'"');/next_path = (char *)strchr(s, '"'"':'"'"');/' \
             tools/lib/bpf/libbpf.c || true
@@ -359,11 +411,12 @@ jobs:
       - name: Package Kernel (AnyKernel3)
         run: |
           KERNEL_VERSION="${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}"
+          SOURCE_UPPER=$(echo "${{ matrix.source }}" | tr '[:lower:]' '[:upper:]')
 
           git clone --depth=1 --branch=gki-2.0 \
             https://github.com/WildKernels/AnyKernel3 AnyKernel3
 
-          sed -i "s|kernel.string=.*|kernel.string=GKI ${KERNEL_VERSION} - xxKSU r${{ env.KSU_VERSION }} for popsicle|" \
+          sed -i "s|kernel.string=.*|kernel.string=${SOURCE_UPPER} ${KERNEL_VERSION} - xxKSU r${{ env.KSU_VERSION }} for popsicle|" \
             AnyKernel3/anykernel.sh
 
           cp "${{ env.KERNEL_DIR }}/out/arch/arm64/boot/Image" AnyKernel3/
@@ -371,7 +424,7 @@ jobs:
             cp "${{ env.KERNEL_DIR }}/out/arch/arm64/boot/dtb" AnyKernel3/ || true
 
           cd AnyKernel3 && rm -rf .git .github
-          ZIP_NAME="AK3-GKI-${KERNEL_VERSION}-popsicle-xxksu-r${{ env.KSU_VERSION }}.zip"
+          ZIP_NAME="AK3-${{ matrix.source }}-${KERNEL_VERSION}-popsicle-xxksu-r${{ env.KSU_VERSION }}.zip"
           zip -r9 "../$ZIP_NAME" .
           cd ..
 
@@ -381,25 +434,27 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: kernel-popsicle-xxksu-${{ github.run_number }}
+          name: kernel-popsicle-${{ matrix.source }}-xxksu-${{ github.run_number }}
           path: ${{ env.KERNEL_ZIP }}
 
       - name: Create GitHub Release
         if: github.event.inputs.create_release == 'true'
         run: |
           KERNEL_VERSION="${{ github.event.inputs.kernel_version }}.${{ github.event.inputs.sub_level }}"
+          SOURCE_UPPER=$(echo "${{ matrix.source }}" | tr '[:lower:]' '[:upper:]')
 
           RELEASE_NOTES="**Build Date:** $(date -u '+%Y-%m-%d %H:%M UTC')
           **Device:** Xiaomi 17 Pro Max (popsicle)
           **SoC:** Snapdragon 8 Elite Gen 5 (SM8850-AC)
-          **Kernel:** GKI ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} (${KERNEL_VERSION} / ${{ github.event.inputs.os_patch_level }})
+          **Kernel Source:** ${SOURCE_UPPER}
+          **Kernel:** ${{ github.event.inputs.android_version }}-${{ github.event.inputs.kernel_version }} (${KERNEL_VERSION} / ${{ github.event.inputs.os_patch_level }})
           **KernelSU:** xxKSU r${{ env.KSU_VERSION }} (${{ env.KSU_COMMIT }})
           **SuSFS:** None
 
           Flash ZIP in Kernel Flasher or extract Image to patch boot.img manually."
 
-          gh release create "popsicle-xxksu-${{ github.run_number }}" \
-            --title "GKI ${KERNEL_VERSION} popsicle xxKSU Build #${{ github.run_number }}" \
+          gh release create "popsicle-${{ matrix.source }}-xxksu-${{ github.run_number }}" \
+            --title "${SOURCE_UPPER} ${KERNEL_VERSION} popsicle xxKSU Build #${{ github.run_number }}" \
             --notes "$RELEASE_NOTES" \
             --repo "${{ github.repository }}" \
             "${{ env.KERNEL_ZIP }}"
