@@ -58,7 +58,6 @@ jobs:
           unzip -q clang.zip -d clang19 && unzip -q rust.zip -d rust && unzip -q build-tools.zip
           rm *.zip
           
-          # Strip -dirty
           find common/scripts -name setlocalversion -exec sed -i 's/ -dirty//g' {} +
 
       - name: Add KernelSU
@@ -134,29 +133,29 @@ jobs:
           
           cd kernel_workspace/common
           
-          # Setup remapping for Rust vs C compatibility
+          # Remapping setup
           COMMON_REAL_PATH=$(pwd -P)
           ROOT_REAL_PATH=$(dirname "$COMMON_REAL_PATH")
           
-          # C Flags
+          # C-Specific Flags (Passed to Clang)
           KCFLAGS="-fdebug-prefix-map=$ROOT_REAL_PATH=. -fmacro-prefix-map=$ROOT_REAL_PATH=. -ffile-prefix-map=$ROOT_REAL_PATH=."
           KCFLAGS+=" -no-canonical-prefixes -O2 -pipe -Wno-error -fno-stack-protector -D__ANDROID_COMMON_KERNEL__"
           export KCFLAGS
           
-          # Rust Flags (Crucial fix for your error)
+          # Rust-Specific Flags (Passed to Rustc - This fixes your error)
           export KRUSTFLAGS="--remap-path-prefix=$ROOT_REAL_PATH=."
 
-          # Time Hijack Preload
-          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so -O libfakestat.so || touch libfakestat.so
-          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so -O libfaketimeMT.so || touch libfaketimeMT.so
-          chmod +x *.so
-          
-          # Build Execution
+          # Build Environment Identity
+          export KBUILD_BUILD_USER=kleaf
+          export KBUILD_BUILD_HOST=build-host
+          export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
+
+          # Kernel make commands
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- O=out gki_defconfig
           
-          # Pass KRUSTFLAGS to make
+          # Final make including segregated flags
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            CC="clang" LD="ld.lld" KRUSTFLAGS="$KRUSTFLAGS" O=out Image
+            CC="clang" LD="ld.lld" KCFLAGS="$KCFLAGS" KRUSTFLAGS="$KRUSTFLAGS" O=out Image
 
       - name: Package AnyKernel3
         id: create_zip
@@ -191,6 +190,10 @@ jobs:
       - name: Create GH Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "build-${{ github.run_id }}"
+          tag_name: "GKI-6.12-${{ github.run_id }}"
           files: "*.zip"
-          body: "Automated GKI 6.12 Build with KernelSU and SuSFS."
+          body: |
+            ### 📱 Android 16 GKI 6.12 Build
+            - KernelSU: ${{ github.event.inputs.ksu_type }}
+            - SuSFS: ${{ github.event.inputs.susfs_enable }}
+            - Netfilter IPSet + BBR enabled.
