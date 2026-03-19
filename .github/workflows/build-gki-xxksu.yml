@@ -109,136 +109,302 @@ jobs:
       - name: Apply xxKSU manual hook patch
         if: ${{ github.event.inputs.ksu_type == 'xxksu' }}
         run: |
-          cd kernel_workspace/common
+          python3 << 'EOF'
+          import sys
+
+          def insert_before(lines, marker, insertion):
+              result = []
+              for line in lines:
+                  if marker in line:
+                      result.extend(insertion)
+                  result.append(line)
+              return result
+
+          def insert_after(lines, marker, insertion):
+              result = []
+              for line in lines:
+                  result.append(line)
+                  if marker in line:
+                      result.extend(insertion)
+              return result
+
+          def patch_file(path, patches):
+              with open(path, 'r') as f:
+                  lines = f.readlines()
+              for check, marker, mode, insertion in patches:
+                  if any(check in l for l in lines):
+                      print(f"SKIP: {path} already contains '{check}'")
+                      continue
+                  ins = [l + '\n' for l in insertion]
+                  if mode == 'before':
+                      lines = insert_before(lines, marker, ins)
+                  else:
+                      lines = insert_after(lines, marker, ins)
+                  print(f"SUCCESS: {path} patched at '{marker}'")
+              with open(path, 'w') as f:
+                  f.writelines(lines)
+
+          # fs/exec.c
+          patch_file('fs/exec.c', [
+              (
+                  'ksu_handle_execveat',
+                  'int do_execve(struct filename *filename,',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '__attribute__((hot))',
+                      'extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,',
+                      '\t\t\t\tvoid *argv, void *envp, int *flags);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_execveat((int *)AT_FDCWD',
+                  '\treturn do_execveat_common(AT_FDCWD, filename, argv, envp, 0);',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);',
+                      '#endif',
+                  ]
+              ),
+          ])
 
           # fs/open.c
-          if ! grep -q "ksu_handle_faccessat" fs/open.c; then
-            sed -i '/^SYSCALL_DEFINE3(faccessat, int, dfd, const char __user \*, filename, int, mode)/{
-              i #ifdef CONFIG_KSU
-              i __attribute__((hot))
-              i extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
-              i \t\t\t\tint *mode, int *flags);
-              i #endif
-              i\
-            }' fs/open.c
-            sed -i '/^SYSCALL_DEFINE3(faccessat, int, dfd, const char __user \*, filename, int, mode)/,/^}/{
-              /if (mode & ~S_IRWXO)/{
-                i #ifdef CONFIG_KSU
-                i \tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);
-                i #endif
-              }
-            }' fs/open.c
-            echo "SUCCESS: fs/open.c patched"
-          else
-            echo "SKIP: fs/open.c already patched"
-          fi
+          patch_file('fs/open.c', [
+              (
+                  'ksu_handle_faccessat',
+                  'SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '__attribute__((hot))',
+                      'extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,',
+                      '\t\t\t\tint *mode, int *flags);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_faccessat(&dfd',
+                  '\tif (mode & ~S_IRWXO)',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+          ])
 
           # fs/stat.c
-          if ! grep -q "ksu_handle_stat" fs/stat.c; then
-            sed -i '/^SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user \*, filename,/{
-              i #ifdef CONFIG_KSU
-              i __attribute__((hot))
-              i extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
-              i \t\t\t\tint *flags);
-              i #endif
-              i\
-            }' fs/stat.c
-            sed -i '/^SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user \*, filename,/,/^}/{
-              /error = vfs_fstatat(dfd, filename, \&stat, flag);/{
-                i #ifdef CONFIG_KSU
-                i \tksu_handle_stat(\&dfd, \&filename, \&flag);
-                i #endif
-              }
-            }' fs/stat.c
-            echo "SUCCESS: fs/stat.c patched"
-          else
-            echo "SKIP: fs/stat.c already patched"
-          fi
-
-          # fs/stat.c - newfstat ret hook
-          if ! grep -q "ksu_handle_newfstat_ret" fs/stat.c; then
-            sed -i '/^SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user \*, statbuf)/{
-              i #ifdef CONFIG_KSU
-              i extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
-              i #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
-              i extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
-              i #endif
-              i #endif
-              i\
-            }' fs/stat.c
-            sed -i '/^SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user \*, statbuf)/,/^}/{
-              /return error;/{
-                i #ifdef CONFIG_KSU
-                i \tksu_handle_newfstat_ret(\&fd, \&statbuf);
-                i #endif
-              }
-            }' fs/stat.c
-            echo "SUCCESS: fs/stat.c newfstat_ret patched"
-          else
-            echo "SKIP: fs/stat.c newfstat_ret already patched"
-          fi
+          patch_file('fs/stat.c', [
+              (
+                  'ksu_handle_stat',
+                  'SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '__attribute__((hot))',
+                      'extern int ksu_handle_stat(int *dfd, const char __user **filename_user,',
+                      '\t\t\t\tint *flags);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_stat(&dfd',
+                  '\terror = vfs_fstatat(dfd, filename, &stat, flag);',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_stat(&dfd, &filename, &flag);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_newfstat_ret',
+                  'SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      'extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);',
+                      '#if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)',
+                      'extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);',
+                      '#endif',
+                      '#endif',
+                      '',
+                  ]
+              ),
+          ])
 
           # kernel/reboot.c
-          if ! grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
-            sed -i '/^SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,/{
-              i #ifdef CONFIG_KSU
-              i extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
-              i #endif
-              i\
-            }' kernel/reboot.c
-            sed -i '/^SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,/,/^}/{
-              /\/\* We only trust the superuser with rebooting the system\. \*\//{
-                i #ifdef CONFIG_KSU
-                i \tksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);
-                i #endif
-              }
-            }' kernel/reboot.c
-            echo "SUCCESS: kernel/reboot.c patched"
-          else
-            echo "SKIP: kernel/reboot.c already patched"
-          fi
+          patch_file('kernel/reboot.c', [
+              (
+                  'ksu_handle_sys_reboot',
+                  'SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      'extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_sys_reboot(magic1',
+                  '\t/* We only trust the superuser with rebooting the system. */',
+                  'before',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);',
+                      '#endif',
+                  ]
+              ),
+          ])
 
-          # fs/exec.c - extern declaration before do_execve()
-          if ! grep -q "ksu_handle_execveat" fs/exec.c; then
-            sed -i '/^int do_execve(struct filename \*filename,/{
-              i #ifdef CONFIG_KSU
-              i __attribute__((hot))
-              i extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
-              i \t\t\t\tvoid *argv, void *envp, int *flags);
-              i #endif
-              i\
-            }' fs/exec.c
-            sed -i '/^int do_execve(struct filename \*filename,/,/^}/{
-              /return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);/{
-                i #ifdef CONFIG_KSU
-                i \tksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);
-                i #endif
-              }
-            }' fs/exec.c
-            echo "SUCCESS: fs/exec.c do_execve patched"
-          else
-            echo "SKIP: fs/exec.c already patched"
-          fi
+          print("All manual hook patches applied successfully")
+          EOF
+          cd kernel_workspace/common
+          python3 /dev/stdin << 'PYEOF'
+          import sys, os
+          os.chdir('.')
 
-          # fs/exec.c - compat_do_execve hook if present
-          if grep -q "^static int compat_do_execve" fs/exec.c; then
-            if ! grep -q "32-bit ksud" fs/exec.c; then
-              sed -i '/^static int compat_do_execve(struct filename \*filename,/,/^}/{
-                /return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);/{
-                  i #ifdef CONFIG_KSU // 32-bit ksud and 32-on-64 support
-                  i \tksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);
-                  i #endif
-                }
-              }' fs/exec.c
-              echo "SUCCESS: fs/exec.c compat_do_execve patched"
-            else
-              echo "SKIP: fs/exec.c compat_do_execve already patched"
-            fi
-          else
-            echo "SKIP: compat_do_execve not present in this tree"
-          fi
+          def insert_before(lines, marker, insertion):
+              result = []
+              for line in lines:
+                  if marker in line:
+                      result.extend(insertion)
+                  result.append(line)
+              return result
 
-          echo "All manual hook patches applied successfully"
+          def patch_file(path, patches):
+              with open(path, 'r') as f:
+                  lines = f.readlines()
+              for check, marker, insertion in patches:
+                  if any(check in l for l in lines):
+                      print(f"SKIP: {path} already contains '{check}'")
+                      continue
+                  ins = [l + '\n' for l in insertion]
+                  lines = insert_before(lines, marker, ins)
+                  print(f"SUCCESS: {path} patched at '{marker}'")
+              with open(path, 'w') as f:
+                  f.writelines(lines)
+
+          patch_file('fs/exec.c', [
+              (
+                  'ksu_handle_execveat',
+                  'int do_execve(struct filename *filename,',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '__attribute__((hot))',
+                      'extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,',
+                      '\t\t\t\tvoid *argv, void *envp, int *flags);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_execveat((int *)AT_FDCWD',
+                  '\treturn do_execveat_common(AT_FDCWD, filename, argv, envp, 0);',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);',
+                      '#endif',
+                  ]
+              ),
+          ])
+
+          patch_file('fs/open.c', [
+              (
+                  'ksu_handle_faccessat',
+                  'SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '__attribute__((hot))',
+                      'extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,',
+                      '\t\t\t\tint *mode, int *flags);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_faccessat(&dfd',
+                  '\tif (mode & ~S_IRWXO)',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+          ])
+
+          patch_file('fs/stat.c', [
+              (
+                  'ksu_handle_stat',
+                  'SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '__attribute__((hot))',
+                      'extern int ksu_handle_stat(int *dfd, const char __user **filename_user,',
+                      '\t\t\t\tint *flags);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_stat(&dfd',
+                  '\terror = vfs_fstatat(dfd, filename, &stat, flag);',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_stat(&dfd, &filename, &flag);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_newfstat_ret',
+                  'SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      'extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);',
+                      '#if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)',
+                      'extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);',
+                      '#endif',
+                      '#endif',
+                      '',
+                  ]
+              ),
+          ])
+
+          patch_file('kernel/reboot.c', [
+              (
+                  'ksu_handle_sys_reboot',
+                  'SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      'extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);',
+                      '#endif',
+                      '',
+                  ]
+              ),
+              (
+                  'ksu_handle_sys_reboot(magic1',
+                  '\t/* We only trust the superuser with rebooting the system. */',
+                  [
+                      '#ifdef CONFIG_KSU',
+                      '\tksu_handle_sys_reboot(magic1, magic2, cmd, &arg);',
+                      '#endif',
+                  ]
+              ),
+          ])
+
+          print("All manual hook patches applied successfully")
+          PYEOF
           
       - name: Apply module check bypass
         run: |
