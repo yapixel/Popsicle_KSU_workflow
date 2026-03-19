@@ -1,4 +1,4 @@
-name: (New Xiaomi/OPPO-OnePlus-Realme Universal) 6.12.23 GKI Kernel Test
+name: (New Xiaomi/OPPO-OnePlus-Realme Universal) 6.12.23 GKI Kernel
 
 env:
   TZ: Asia/Shanghai
@@ -62,10 +62,11 @@ jobs:
           tar xzf common.tar.gz -C common &&
           rm -f common.tar.gz &
 
+          # clang prebuilts repo uses 'main', not the kernel branch name
           echo "Fetching official clang-r536225 toolchain (Google official)..."
           mkdir -p clang19 &&
           aria2c -s16 -x16 -k1M \
-            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android16-6.12-2025-06/clang-r536225.tar.gz" \
+            "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main/clang-r536225.tar.gz" \
             -o clang.tar.gz &&
           tar xzf clang.tar.gz -C clang19 &&
           rm -f clang.tar.gz &
@@ -89,11 +90,22 @@ jobs:
           wait
           echo "All sources and toolchain components initialized!"
 
+          # Post-wait sanity check — catch any silent background job failures early
+          KW="$GITHUB_WORKSPACE/kernel_workspace"
+          echo "=== Post-wait directory check ==="
+          ls -la "$KW/"
+          echo "--- clang19 ---"
+          ls -la "$KW/clang19/" || echo "clang19 empty or missing"
+          echo "--- common (first 5 entries) ---"
+          ls -la "$KW/common/" | head -5 || echo "common empty or missing"
+          echo "--- build-tools/bin (first 5 entries) ---"
+          ls "$KW/build-tools/bin/" | head -5 || echo "build-tools/bin empty or missing"
+          echo "--- rust/bin ---"
+          ls "$KW/rust/bin/" | head -5 || echo "rust/bin empty or missing"
+
           # Auto-detect clang layout from googlesource tarball.
           # Use $GITHUB_WORKSPACE absolute path — avoids any cd subshell persistence issues.
-          KW="$GITHUB_WORKSPACE/kernel_workspace"
           echo "=== Detecting clang19 layout ==="
-          ls -la "$KW/clang19/"
           if [ -x "$KW/clang19/bin/clang" ]; then
             CLANG_BIN="$KW/clang19/bin"
             CLANG_LIB="$KW/clang19/lib"
