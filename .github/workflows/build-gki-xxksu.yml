@@ -106,11 +106,245 @@ jobs:
             echo "ksuver=none" >> $GITHUB_OUTPUT
           fi
 
+      - name: Apply xxKSU manual hooks (issues #5 and #7)
+        if: ${{ github.event.inputs.ksu_type == 'xxksu' }}
+        run: |
+          cd kernel_workspace/common
+
+          echo "=== Applying xxKSU manual hooks (backslashxx/KernelSU issues #5 and #7) ==="
+
+          # -----------------------------------------------------------------------
+          # Issue #5 — scope-minimized syscall hooks (sucompat, GKI 6.12)
+          # Hooks: sys_execve (do_execve), sys_faccessat, sys_newfstatat
+          # All three are always manual regardless of kprobes.
+          # -----------------------------------------------------------------------
+
+          echo "--- #5: fs/exec.c — do_execve hook (sucompat) ---"
+          python3 - <<'PYEOF'
+          import re, sys
+
+          path = "fs/exec.c"
+          src = open(path).read()
+
+          decl = (
+              "\n#ifdef CONFIG_KSU\n"
+              "__attribute__((hot))\n"
+              "extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,\n"
+              "\t\t\t\tvoid *argv, void *envp, int *flags);\n"
+              "#endif\n"
+          )
+          call_native = (
+              "#ifdef CONFIG_KSU\n"
+              "\tksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);\n"
+              "#endif\n\t"
+          )
+          call_compat = (
+              "#ifdef CONFIG_KSU\n"
+              "\tksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);\n"
+              "#endif\n\t"
+          )
+
+          if "ksu_handle_execveat" in src:
+              print("fs/exec.c: do_execve hook already present, skipping.")
+              sys.exit(0)
+
+          # Insert declaration before do_execve definition
+          src = re.sub(
+              r'(^int do_execve\(struct filename \*filename,)',
+              decl + r'\1',
+              src, count=1, flags=re.MULTILINE
+          )
+          # Insert call in do_execve body, before return do_execveat_common
+          src = re.sub(
+              r'(\treturn do_execveat_common\(AT_FDCWD, filename, argv, envp, 0\);)',
+              call_native + r'\1',
+              src, count=1
+          )
+          # Insert call in compat_do_execve body, before return do_execveat_common
+          src = re.sub(
+              r'(\treturn do_execveat_common\(AT_FDCWD, filename, argv, envp, 0\);)',
+              call_compat + r'\1',
+              src, count=0
+          )
+
+          open(path, "w").write(src)
+          print("fs/exec.c: do_execve hook applied.")
+          PYEOF
+
+          echo "--- #5: fs/open.c — sys_faccessat hook (sucompat) ---"
+          python3 - <<'PYEOF'
+          import re, sys
+
+          path = "fs/open.c"
+          src = open(path).read()
+
+          if "ksu_handle_faccessat" in src:
+              print("fs/open.c: faccessat hook already present, skipping.")
+              sys.exit(0)
+
+          decl = (
+              "\n#ifdef CONFIG_KSU\n"
+              "__attribute__((hot))\n"
+              "extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,\n"
+              "\t\t\t\tint *mode, int *flags);\n"
+              "#endif\n"
+          )
+          call = (
+              "#ifdef CONFIG_KSU\n"
+              "\tksu_handle_faccessat(&dfd, &filename, &mode, NULL);\n"
+              "#endif\n\t"
+          )
+
+          # Insert declaration before SYSCALL_DEFINE3(faccessat, ...)
+          src = re.sub(
+              r'(^SYSCALL_DEFINE3\(faccessat,)',
+              decl + r'\1',
+              src, count=1, flags=re.MULTILINE
+          )
+          # Insert call inside faccessat body — after the opening brace line of the syscall,
+          # targeting the do_faccessat call which is the only substantive call in the stub.
+          src = re.sub(
+              r'(\treturn do_faccessat\(dfd, filename, mode\);)',
+              call + r'\1',
+              src, count=1
+          )
+
+          open(path, "w").write(src)
+          print("fs/open.c: faccessat hook applied.")
+          PYEOF
+
+          echo "--- #5: fs/stat.c — sys_newfstatat + sys_fstatat64 hooks (sucompat) ---"
+          python3 - <<'PYEOF'
+          import re, sys
+
+          path = "fs/stat.c"
+          src = open(path).read()
+
+          if "ksu_handle_stat" in src:
+              print("fs/stat.c: newfstatat hook already present, skipping.")
+              sys.exit(0)
+
+          decl = (
+              "\n#ifdef CONFIG_KSU\n"
+              "__attribute__((hot))\n"
+              "extern int ksu_handle_stat(int *dfd, const char __user **filename_user,\n"
+              "\t\t\t\tint *flags);\n"
+              "#endif\n"
+          )
+          call_newfstatat = (
+              "#ifdef CONFIG_KSU\n"
+              "\tksu_handle_stat(&dfd, &filename, &flag);\n"
+              "#endif\n\t"
+          )
+          call_fstatat64 = (
+              "#ifdef CONFIG_KSU\n"
+              "\tksu_handle_stat(&dfd, &filename, &flag);\n"
+              "#endif\n\t"
+          )
+
+          # Insert declaration before the newfstatat SYSCALL block
+          src = re.sub(
+              r'(#if !defined\(__ARCH_WANT_STAT64\) \|\| defined\(__ARCH_WANT_SYS_NEWFSTATAT\)\n'
+              r'SYSCALL_DEFINE4\(newfstatat,)',
+              decl + r'\1',
+              src, count=1
+          )
+          # Insert call in newfstatat before vfs_fstatat
+          src = re.sub(
+              r'(\terror = vfs_fstatat\(dfd, filename, &stat, flag\);\n'
+              r'\tif \(error\)\n'
+              r'\t\treturn error;\n'
+              r'\treturn cp_new_stat\(&stat, statbuf\);)',
+              call_newfstatat + r'\1',
+              src, count=1
+          )
+          # Insert call in fstatat64 before vfs_fstatat (second occurrence)
+          src = re.sub(
+              r'(SYSCALL_DEFINE4\(fstatat64,.*?\n.*?\n.*?\n\t)(error = vfs_fstatat)',
+              r'\1' + call_fstatat64 + r'\2',
+              src, count=1, flags=re.DOTALL
+          )
+
+          open(path, "w").write(src)
+          print("fs/stat.c: newfstatat + fstatat64 hooks applied.")
+          PYEOF
+
+          # -----------------------------------------------------------------------
+          # Issue #7 — manual LSM/security hooks
+          # Required for kernels > 6.6. GKI 6.12 falls in this range.
+          # Hooks: ksu_bprm_check, ksu_handle_rename, ksu_handle_setuid,
+          #        ksu_file_permission (v1.8 addition)
+          # Requires CONFIG_KSU_LSM_SECURITY_HOOKS=n in defconfig (added below).
+          # -----------------------------------------------------------------------
+
+          echo "--- #7: security/security.c — LSM hooks ---"
+          python3 - <<'PYEOF'
+          import re, sys
+
+          path = "security/security.c"
+          src = open(path).read()
+
+          if "ksu_bprm_check" in src:
+              print("security/security.c: LSM hooks already present, skipping.")
+              sys.exit(0)
+
+          # Forward declarations — insert near top, after the last #include block
+          decls = (
+              "\n#ifdef CONFIG_KSU\n"
+              "extern int ksu_bprm_check(struct linux_binprm *bprm);\n"
+              "extern int ksu_handle_rename(struct dentry *old_dentry, struct dentry *new_dentry);\n"
+              "extern int ksu_handle_setuid(struct cred *new, const struct cred *old);\n"
+              "extern int ksu_file_permission(struct file *file, int mask);\n"
+              "#endif\n"
+          )
+
+          # Insert after the last top-level #include line
+          src = re.sub(
+              r'(^#include [^\n]+\n)(?!#include)',
+              r'\1' + decls,
+              src, count=1, flags=re.MULTILINE
+          )
+
+          # ksu_bprm_check — insert at top of security_bprm_check()
+          src = re.sub(
+              r'(^int security_bprm_check\(struct linux_binprm \*bprm\)\s*\{)',
+              r'\1\n#ifdef CONFIG_KSU\n\tksu_bprm_check(bprm);\n#endif',
+              src, count=1, flags=re.MULTILINE
+          )
+
+          # ksu_handle_rename — insert at top of security_inode_rename()
+          src = re.sub(
+              r'(^int security_inode_rename\(struct inode \*old_dir[^\{]+\{)',
+              r'\1\n#ifdef CONFIG_KSU\n\tksu_handle_rename(old_dentry, new_dentry);\n#endif',
+              src, count=1, flags=re.MULTILINE
+          )
+
+          # ksu_file_permission — insert at top of security_file_permission()
+          src = re.sub(
+              r'(^int security_file_permission\(struct file \*file, int mask\)\s*\{)',
+              r'\1\n#ifdef CONFIG_KSU\n\tksu_file_permission(file, mask);\n#endif',
+              src, count=1, flags=re.MULTILINE
+          )
+
+          # ksu_handle_setuid — insert at top of security_task_fix_setuid()
+          src = re.sub(
+              r'(^int security_task_fix_setuid\(struct cred \*new[^\{]+\{)',
+              r'\1\n#ifdef CONFIG_KSU\n\tksu_handle_setuid(new, old);\n#endif',
+              src, count=1, flags=re.MULTILINE
+          )
+
+          open(path, "w").write(src)
+          print("security/security.c: LSM hooks applied.")
+          PYEOF
+
+          echo "=== xxKSU manual hooks applied ==="
+
       - name: Add KSU & other config options
         run: |
           cd kernel_workspace
           echo "CONFIG_KSU=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_KSU_SUSFS=n" >> ./common/arch/arm64/configs/gki_defconfig
+          echo "CONFIG_KSU_LSM_SECURITY_HOOKS=n" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_XATTR=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> ./common/arch/arm64/configs/gki_defconfig
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> ./common/arch/arm64/configs/gki_defconfig
