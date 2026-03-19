@@ -80,7 +80,7 @@ jobs:
           done
 
 
-      - name: 添加KernelSU (xxKSU)
+      - name: setup xxKSU
         id: ksu_version
         run: |
           cd kernel_workspace/common
