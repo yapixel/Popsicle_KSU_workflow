@@ -90,27 +90,29 @@ jobs:
           echo "All sources and toolchain components initialized!"
 
           # Auto-detect clang layout from googlesource tarball.
-          # googlesource per-directory tarballs typically extract with a matching subdirectory
-          # (e.g. clang-r536225/bin/) but flat extraction is also possible.
+          # The initial `cd kernel_workspace` above only persists within that subshell block;
+          # after `wait` we are back at GITHUB_WORKSPACE, so cd in explicitly.
           echo "=== Detecting clang19 layout ==="
-          ls -la kernel_workspace/clang19/
-          if [ -x "kernel_workspace/clang19/bin/clang" ]; then
-            CLANG_BIN="$(pwd)/kernel_workspace/clang19/bin"
-            CLANG_LIB="$(pwd)/kernel_workspace/clang19/lib"
+          cd kernel_workspace
+          ls -la clang19/
+          if [ -x "clang19/bin/clang" ]; then
+            CLANG_BIN="$(pwd)/clang19/bin"
+            CLANG_LIB="$(pwd)/clang19/lib"
             echo "Layout: flat (clang19/bin/clang)"
-          elif [ -x "kernel_workspace/clang19/clang-r536225/bin/clang" ]; then
-            CLANG_BIN="$(pwd)/kernel_workspace/clang19/clang-r536225/bin"
-            CLANG_LIB="$(pwd)/kernel_workspace/clang19/clang-r536225/lib"
+          elif [ -x "clang19/clang-r536225/bin/clang" ]; then
+            CLANG_BIN="$(pwd)/clang19/clang-r536225/bin"
+            CLANG_LIB="$(pwd)/clang19/clang-r536225/lib"
             echo "Layout: subdirectory (clang19/clang-r536225/bin/clang)"
           else
             echo "ERROR: Could not locate clang binary. Full search:"
-            find kernel_workspace/clang19 -name "clang" -type f 2>/dev/null || echo "no clang binary found"
+            find clang19 -name "clang" -type f 2>/dev/null || echo "no clang binary found"
             exit 1
           fi
           echo "CLANG_BIN=$CLANG_BIN" >> $GITHUB_ENV
           echo "CLANG_LIB=$CLANG_LIB" >> $GITHUB_ENV
           echo "Resolved clang: $CLANG_BIN/clang"
           $CLANG_BIN/clang --version | head -n1
+          cd ..
 
           echo "Stripping -dirty suffix..."
           for f in kernel_workspace/common/scripts/setlocalversion; do
