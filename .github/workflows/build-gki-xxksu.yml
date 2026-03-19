@@ -111,21 +111,94 @@ jobs:
         run: |
           cd kernel_workspace/common
 
-          # fs/open.c, fs/stat.c, kernel/reboot.c patch cleanly - apply those only
-          curl -LSs https://raw.githubusercontent.com/yapixel/kernel_patches/refs/heads/dev/syscall_hook/scope-min-hooks-v1.9.patch -o manual-hook.patch
-          patch -p1 --forward \
-            --include="fs/open.c" \
-            --include="fs/stat.c" \
-            --include="kernel/reboot.c" \
-            < manual-hook.patch || {
-            echo "FAILED: Partial patch (open/stat/reboot) did not apply cleanly"
-            find . -name "*.rej" | while read r; do echo "=== $r ==="; cat "$r"; done || true
-            exit 1
-          }
-          echo "SUCCESS: fs/open.c, fs/stat.c, kernel/reboot.c patched"
+          # fs/open.c
+          if ! grep -q "ksu_handle_faccessat" fs/open.c; then
+            sed -i '/^SYSCALL_DEFINE3(faccessat, int, dfd, const char __user \*, filename, int, mode)/{
+              i #ifdef CONFIG_KSU
+              i __attribute__((hot))
+              i extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user,
+              i \t\t\t\tint *mode, int *flags);
+              i #endif
+              i\
+            }' fs/open.c
+            sed -i '/^SYSCALL_DEFINE3(faccessat, int, dfd, const char __user \*, filename, int, mode)/,/^}/{
+              /if (mode & ~S_IRWXO)/{
+                i #ifdef CONFIG_KSU
+                i \tksu_handle_faccessat(\&dfd, \&filename, \&mode, NULL);
+                i #endif
+              }
+            }' fs/open.c
+            echo "SUCCESS: fs/open.c patched"
+          else
+            echo "SKIP: fs/open.c already patched"
+          fi
 
-          # fs/exec.c: do_execve_file is absent in this tree; insert hooks manually
-          # 1. Insert extern declaration before do_execve()
+          # fs/stat.c
+          if ! grep -q "ksu_handle_stat" fs/stat.c; then
+            sed -i '/^SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user \*, filename,/{
+              i #ifdef CONFIG_KSU
+              i __attribute__((hot))
+              i extern int ksu_handle_stat(int *dfd, const char __user **filename_user,
+              i \t\t\t\tint *flags);
+              i #endif
+              i\
+            }' fs/stat.c
+            sed -i '/^SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user \*, filename,/,/^}/{
+              /error = vfs_fstatat(dfd, filename, \&stat, flag);/{
+                i #ifdef CONFIG_KSU
+                i \tksu_handle_stat(\&dfd, \&filename, \&flag);
+                i #endif
+              }
+            }' fs/stat.c
+            echo "SUCCESS: fs/stat.c patched"
+          else
+            echo "SKIP: fs/stat.c already patched"
+          fi
+
+          # fs/stat.c - newfstat ret hook
+          if ! grep -q "ksu_handle_newfstat_ret" fs/stat.c; then
+            sed -i '/^SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user \*, statbuf)/{
+              i #ifdef CONFIG_KSU
+              i extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
+              i #if defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_COMPAT_STAT64)
+              i extern void ksu_handle_fstat64_ret(unsigned long *fd, struct stat64 __user **statbuf_ptr);
+              i #endif
+              i #endif
+              i\
+            }' fs/stat.c
+            sed -i '/^SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user \*, statbuf)/,/^}/{
+              /return error;/{
+                i #ifdef CONFIG_KSU
+                i \tksu_handle_newfstat_ret(\&fd, \&statbuf);
+                i #endif
+              }
+            }' fs/stat.c
+            echo "SUCCESS: fs/stat.c newfstat_ret patched"
+          else
+            echo "SKIP: fs/stat.c newfstat_ret already patched"
+          fi
+
+          # kernel/reboot.c
+          if ! grep -q "ksu_handle_sys_reboot" kernel/reboot.c; then
+            sed -i '/^SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,/{
+              i #ifdef CONFIG_KSU
+              i extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
+              i #endif
+              i\
+            }' kernel/reboot.c
+            sed -i '/^SYSCALL_DEFINE4(reboot, int, magic1, int, magic2, unsigned int, cmd,/,/^}/{
+              /\/\* We only trust the superuser with rebooting the system\. \*\//{
+                i #ifdef CONFIG_KSU
+                i \tksu_handle_sys_reboot(magic1, magic2, cmd, \&arg);
+                i #endif
+              }
+            }' kernel/reboot.c
+            echo "SUCCESS: kernel/reboot.c patched"
+          else
+            echo "SKIP: kernel/reboot.c already patched"
+          fi
+
+          # fs/exec.c - extern declaration before do_execve()
           if ! grep -q "ksu_handle_execveat" fs/exec.c; then
             sed -i '/^int do_execve(struct filename \*filename,/{
               i #ifdef CONFIG_KSU
@@ -135,42 +208,38 @@ jobs:
               i #endif
               i\
             }' fs/exec.c
-            echo "SUCCESS: ksu_handle_execveat extern inserted before do_execve"
-          else
-            echo "SKIP: ksu_handle_execveat extern already present"
-          fi
-
-          # 2. Insert hook call inside do_execve(), before the return
-          if ! grep -q "ksu_handle_execveat.*AT_FDCWD.*filename.*argv.*envp" fs/exec.c; then
             sed -i '/^int do_execve(struct filename \*filename,/,/^}/{
               /return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);/{
                 i #ifdef CONFIG_KSU
-                i \tksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+                i \tksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);
                 i #endif
               }
             }' fs/exec.c
-            echo "SUCCESS: ksu_handle_execveat hook call inserted in do_execve"
+            echo "SUCCESS: fs/exec.c do_execve patched"
           else
-            echo "SKIP: ksu_handle_execveat hook call already present"
+            echo "SKIP: fs/exec.c already patched"
           fi
 
-          # 3. Insert hook call inside compat_do_execve() if present
-          if grep -q "compat_do_execve" fs/exec.c; then
-            if ! grep -q "ksu_handle_execveat.*AT_FDCWD.*filename.*argv.*envp" fs/exec.c; then
+          # fs/exec.c - compat_do_execve hook if present
+          if grep -q "^static int compat_do_execve" fs/exec.c; then
+            if ! grep -q "32-bit ksud" fs/exec.c; then
               sed -i '/^static int compat_do_execve(struct filename \*filename,/,/^}/{
                 /return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);/{
                   i #ifdef CONFIG_KSU // 32-bit ksud and 32-on-64 support
-                  i \tksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
+                  i \tksu_handle_execveat((int *)AT_FDCWD, \&filename, \&argv, \&envp, 0);
                   i #endif
                 }
               }' fs/exec.c
-              echo "SUCCESS: ksu_handle_execveat hook call inserted in compat_do_execve"
+              echo "SUCCESS: fs/exec.c compat_do_execve patched"
+            else
+              echo "SKIP: fs/exec.c compat_do_execve already patched"
             fi
           else
             echo "SKIP: compat_do_execve not present in this tree"
           fi
 
           echo "All manual hook patches applied successfully"
+          
       - name: Apply module check bypass
         run: |
           TARGET_FILE="$(pwd)/kernel_workspace/common/kernel/module/version.c"
