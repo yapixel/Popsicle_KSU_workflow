@@ -1,5 +1,4 @@
-name: 6.12.23 GKI Kernel no SUSFS
-
+name: build 6.12.23 GKI Kernel xxksu
 env:
   TZ: Asia/Shanghai
   ANDROID_VERSION: 'android16'
