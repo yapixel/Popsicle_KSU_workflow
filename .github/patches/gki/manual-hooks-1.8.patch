@@ -1,6 +1,6 @@
 --- a/security/security.c
 +++ b/security/security.c
-@@ -132,6 +132,19 @@ int __init register_security(struct security_operations *ops)
+@@ -132,6 +132,13 @@ int __init register_security(struct security_operations *ops)
  	return 0;
  }
  
@@ -14,7 +14,7 @@
  /* Security operations */
  
  
-@@ -238,7 +245,9 @@ int security_bprm_check(struct linux_binprm *bprm)
+@@ -238,5 +245,8 @@ int security_bprm_check(struct linux_binprm *bprm)
  {
  	int ret;
 +#ifdef CONFIG_KSU
@@ -23,7 +23,7 @@
  	ret = security_ops->bprm_check_security(bprm);
  	if (ret)
  		return ret;
-@@ -545,6 +554,9 @@ int security_inode_rename(struct inode *old_dir, struct dentry *old_dentry,
+@@ -545,5 +554,8 @@ int security_inode_rename(struct inode *old_dir, struct dentry *old_dentry,
  			   struct inode *new_dir, struct dentry *new_dentry)
  {
 +#ifdef CONFIG_KSU
@@ -32,7 +32,7 @@
          if (unlikely(IS_PRIVATE(old_dentry->d_inode) ||
              (new_dentry->d_inode && IS_PRIVATE(new_dentry->d_inode))))
  		return 0;
-@@ -687,6 +699,10 @@ int security_file_permission(struct file *file, int mask)
+@@ -687,6 +699,9 @@ int security_file_permission(struct file *file, int mask)
  {
  	int ret;
  
@@ -42,7 +42,7 @@
  	ret = security_ops->file_permission(file, mask);
  	if (ret)
  		return ret;
-@@ -879,6 +895,9 @@ int security_task_fix_setuid(struct cred *new, const struct cred *old,
+@@ -879,4 +895,7 @@ int security_task_fix_setuid(struct cred *new, const struct cred *old,
  			     int flags)
  {
 +#ifdef CONFIG_KSU
