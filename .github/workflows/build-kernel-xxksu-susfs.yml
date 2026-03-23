@@ -154,7 +154,7 @@ jobs:
           esac
 
       - name: Setup SuSFS
-        if: env.ENABLE_SUSFS == 'true'
+        if: env.ENABLE_SUSFS == 'true' || matrix.variant == 'xxksu'
         run: |
           cp "${{ env.SUSFS_DIR }}/kernel_patches/fs/susfs.c" "${{ env.KERNEL_DIR }}/fs/"
           cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs.h" "${{ env.KERNEL_DIR }}/include/linux/"
@@ -164,8 +164,7 @@ jobs:
           
           # Patch KernelSU directory
           cd KernelSU
-          # Note: If this fails for kowsu, you might need to revert 898e9d4f8ca9b2f46b0c6b36b80a872b5b88d899
-          patch -p1 < "${{ env.SUSFS_DIR }}/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" || true
+          patch -p1 < "${{ github.workspace }}/.github/patches/xxksu/10_enable_susfs_for_ksu.patch
 
       - name: Apply Manual Hooks Patches (xxKSU only)
         if: matrix.variant == 'xxksu'
