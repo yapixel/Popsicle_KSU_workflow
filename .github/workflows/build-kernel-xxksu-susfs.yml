@@ -118,11 +118,11 @@ jobs:
           tar -xJf tc-arm.tar.xz && rm tc-arm.tar.xz
           echo "ARM32_TOOLCHAIN=$HOME/toolchains/$(ls -d arm-gnu-toolchain-*arm-none-eabi*)/bin/arm-none-eabi-" >> $GITHUB_ENV
 
-      - name: Sync kernel sources (OKI SM8850)
+      - name: Sync kernel sources (GKI SM8850)
         run: |
           mkdir -p "${{ env.KERNEL_ROOT }}" && cd "${{ env.KERNEL_ROOT }}"
           aria2c -s16 -x16 -k1M \
-            https://github.com/cctv18/android_kernel_common_oneplus_sm8850/archive/refs/heads/oneplus/sm8850_v_16.0.0_oneplus_15.zip \
+            https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/android16-6.12-2025-06.zip \
             -o common.zip
           unzip -q common.zip
           mv "android_kernel_common_oneplus_sm8850-oneplus-sm8850_v_16.0.0_oneplus_15" common
