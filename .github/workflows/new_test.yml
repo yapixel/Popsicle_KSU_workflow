@@ -245,7 +245,7 @@ jobs:
           # Fix libbpf type cast error
           sed -i 's/next_path = strchr(s, '"'"':'"'"');/next_path = (char *)strchr(s, '"'"':'"'"');/' tools/lib/bpf/libbpf.c || true
 
-          # Provide a weak fallback variable to satisfy the Linker for xxKSU
+          # Inject the missing variable and set to TRUE so SuSFS features fully activate
           echo "bool ksu_su_compat_enabled __attribute__((weak)) = true;" >> fs/susfs.c
 
       - name: Write Defconfig Fragment
