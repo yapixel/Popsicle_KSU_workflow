@@ -1,4 +1,4 @@
-name: Build GKI Kernel android16-6.12 xxksu susfs Test
+name: Build GKI Kernel android16-6.12 xxksu susfs
 
 on:
   workflow_dispatch:
@@ -140,7 +140,6 @@ jobs:
       - name: Sync SuSFS Source
         run: |
           SUSFS_DIR="${{ github.workspace }}/susfs4ksu"
-          # No pin: uses latest commit on gki-android16-6.12-dev
           git clone --depth=1 --branch=gki-android16-6.12-dev https://gitlab.com/simonpunk/susfs4ksu "$SUSFS_DIR"
           echo "SUSFS_DIR=$SUSFS_DIR" >> $GITHUB_ENV
 
@@ -171,27 +170,46 @@ jobs:
           cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs_def.h" "${{ env.KERNEL_DIR }}/include/linux/"
           cd "${{ env.KERNEL_DIR }}"
           
+          # 1. Create the Python Patch Healer
+          cat << 'EOF' > heal_patch.py
+          import sys
+          with open(sys.argv[1], 'r', encoding='utf-8') as f: lines = f.read().splitlines()
+          with open(sys.argv[1], 'w', encoding='utf-8', newline='\n') as f:
+              in_hunk = False
+              for line in lines:
+                  if line.startswith('@@ '): in_hunk = True; f.write(line + '\n'); continue
+                  if line.startswith(('--- ', '+++ ')): in_hunk = False; f.write(line + '\n'); continue
+                  if not in_hunk: f.write(line + '\n'); continue
+                  if len(line) == 0: f.write(' \n')
+                  elif line[0] not in ['+', '-', ' ', '\\']: f.write(' ' + line + '\n')
+                  else: f.write(line + '\n')
+          EOF
+
+          # 2. Apply standard SuSFS patch
           patch -p1 < "${{ env.SUSFS_DIR }}/kernel_patches/50_add_susfs_in_gki-android16-6.12.patch" 
           
-          # Fix hidden line endings and force patch to ignore whitespace strictness
-          sed -i 's/\r$//' "${{ github.workspace }}/.github/patches/xxksu/xxksu_susfs_compat.patch"
-          patch -p1 -l < "${{ github.workspace }}/.github/patches/xxksu/xxksu_susfs_compat.patch"
+          # 3. Heal and apply custom compat patch
+          python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/xxksu_susfs_compat.patch"
+          patch -p1 < "${{ github.workspace }}/.github/patches/xxksu/xxksu_susfs_compat.patch"
 
       - name: Apply Manual Hooks Patches (xxKSU only)
         if: matrix.variant == 'xxksu'
         run: |
           cd "${{ env.KERNEL_DIR }}"
           
-          sed -i 's/\r$//' "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.8.patch"
-          patch -p1 -l < "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.8.patch" || exit 1
+          # Heal and apply manual security hooks
+          python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.8.patch"
+          patch -p1 < "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.8.patch" || exit 1
           
-          sed -i 's/\r$//' "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch"
-          patch -p1 -l < "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch" || exit 1
+          # Heal and apply scope min hooks
+          python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch"
+          patch -p1 < "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch" || exit 1
           
           cd KernelSU
           
-          sed -i 's/\r$//' "${{ github.workspace }}/.github/patches/xxksu/10_enable_susfs_for_ksu.patch"
-          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/10_enable_susfs_for_ksu.patch" || exit 1
+          # Heal and apply KernelSU susfs patch (referencing the healer script in the parent dir)
+          python3 ../heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/10_enable_susfs_for_ksu.patch"
+          patch -p1 --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/10_enable_susfs_for_ksu.patch" || exit 1
 
       - name: Apply Source Fixes
         run: |
