@@ -1,4 +1,4 @@
-name: Build GKI Kernel android16-6.12 xxksu susfs
+name: Build GKI xxksu/kowsu susfs
 
 on:
   workflow_dispatch:
