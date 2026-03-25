@@ -225,55 +225,123 @@ jobs:
           cd "${{ env.KERNEL_DIR }}/KernelSU"
           python3 ../heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
-          
-      - name: Upload Diagnostic Files
-        if: matrix.variant == 'xxksu'
+
+      - name: Fix xxKSU SUSFS Linker Errors
+        if: matrix.variant == 'xxksu' && env.ENABLE_SUSFS == 'true'
         run: |
-          mkdir -p /tmp/diag/patches
-          mkdir -p /tmp/diag/kernel_hook
-          mkdir -p /tmp/diag/kernel_ksu
+          cd "${{ env.KERNEL_DIR }}"
 
-          # Hook headers and implementation
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/hook/syscall_hook.h /tmp/diag/kernel_hook/ 2>/dev/null || true
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/hook/*.c /tmp/diag/kernel_hook/ 2>/dev/null || true
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/hook/*.h /tmp/diag/kernel_hook/ 2>/dev/null || true
+          python3 << 'PYEOF'
+          import sys, re
 
-          # syscall_hook_manager if it exists
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/syscall_hook_manager.* /tmp/diag/kernel_ksu/ 2>/dev/null || true
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/syscall_hook_manager.h /tmp/diag/kernel_ksu/ 2>/dev/null || true
+          # ── Fix supercalls.c: remove 'static' from ksu_handle_sys_reboot ──────
+          with open("drivers/kernelsu/supercalls.c", "r") as f:
+              src = f.read()
 
-          # ksud.h and ksu.h
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/ksud.h /tmp/diag/kernel_ksu/ 2>/dev/null || true
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/ksu.h /tmp/diag/kernel_ksu/ 2>/dev/null || true
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/ksud.c /tmp/diag/kernel_ksu/ 2>/dev/null || true
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/supercalls.c /tmp/diag/kernel_ksu/ 2>/dev/null || true
-          cp "${{ env.KERNEL_DIR }}"/drivers/kernelsu/ksu.c /tmp/diag/kernel_ksu/ 2>/dev/null || true
+          OLD = 'static int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg)\n'
+          NEW = 'int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg)\n'
 
-          # The xxksu patches
-          cp "${{ github.workspace }}"/.github/patches/xxksu/*.patch /tmp/diag/patches/ 2>/dev/null || true
+          if OLD in src:
+              src = src.replace(OLD, NEW, 1)
+              with open("drivers/kernelsu/supercalls.c", "w") as f:
+                  f.write(src)
+              print("OK: removed static from ksu_handle_sys_reboot")
+          elif NEW in src:
+              print("SKIP: ksu_handle_sys_reboot already non-static")
+          else:
+              print("WARN: ksu_handle_sys_reboot not found in supercalls.c", file=sys.stderr)
 
-          # fs hooks that reference the missing symbols
-          grep -n "ksu_init_rc_hook\|ksu_handle_sys_read\|ksu_handle_vfs_fstat\|ksu_execveat_hook\|ksu_input_hook\|ksu_handle_sys_reboot\|ksu_syscall_hook_manager" \
-            "${{ env.KERNEL_DIR }}"/fs/read_write.c \
-            "${{ env.KERNEL_DIR }}"/fs/stat.c \
-            "${{ env.KERNEL_DIR }}"/fs/exec.c \
-            "${{ env.KERNEL_DIR }}"/kernel/reboot.c \
-            "${{ env.KERNEL_DIR }}"/drivers/input/input.c \
-            2>/dev/null > /tmp/diag/fs_hook_references.txt || true
+          # ── Fix ksud.c: guard struct user_arg_ptr and 2-arg fn ───────────────
+          with open("drivers/kernelsu/ksud.c", "r") as f:
+              src = f.read()
 
-          # List all files in kernelsu driver dir
-          ls -la "${{ env.KERNEL_DIR }}"/drivers/kernelsu/ > /tmp/diag/kernelsu_files.txt 2>/dev/null || true
-          ls -la "${{ env.KERNEL_DIR }}"/drivers/kernelsu/hook/ >> /tmp/diag/kernelsu_files.txt 2>/dev/null || true
+          original = src
 
-        continue-on-error: true
+          # Move MAX_ARG_STRINGS outside guard if needed
+          OLD_A = ('#ifndef CONFIG_KSU_SUSFS\n'
+                   '#define MAX_ARG_STRINGS 0x7FFFFFFF\n')
+          NEW_A = ('#define MAX_ARG_STRINGS 0x7FFFFFFF\n'
+                   '#ifndef CONFIG_KSU_SUSFS\n')
+          if OLD_A in src:
+              src = src.replace(OLD_A, NEW_A, 1)
+              print("OK: moved MAX_ARG_STRINGS outside #ifndef guard")
 
-      - name: Upload Diagnostic Artifact
-        if: matrix.variant == 'xxksu'
-        uses: actions/upload-artifact@v4
-        with:
-          name: diag-xxksu
-          path: /tmp/diag/
-        continue-on-error: true
+          # Ensure #endif closes right after the 2-arg fn, before orig_read
+          OLD_B = ('#endif // #ifndef CONFIG_KSU_SUSFS\n'
+                   '\n'
+                   'void ksu_execve_hook_ksud(const struct pt_regs *regs)\n')
+          if OLD_B in src:
+              src = src.replace(OLD_B,
+                  '\nvoid ksu_execve_hook_ksud(const struct pt_regs *regs)\n', 1)
+              print("OK: removed misplaced #endif before ksu_execve_hook_ksud")
+
+          OLD_C = ('static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);\n'
+                   'static ssize_t (*orig_read_iter)(struct kiocb *, struct iov_iter *);\n')
+          NEW_C = ('#endif // #ifndef CONFIG_KSU_SUSFS\n'
+                   '\n'
+                   'static ssize_t (*orig_read)(struct file *, char __user *, size_t, loff_t *);\n'
+                   'static ssize_t (*orig_read_iter)(struct kiocb *, struct iov_iter *);\n')
+          if OLD_C in src and NEW_C not in src:
+              src = src.replace(OLD_C, NEW_C, 1)
+              print("OK: inserted #endif before orig_read block")
+
+          if src != original:
+              with open("drivers/kernelsu/ksud.c", "w") as f:
+                  f.write(src)
+          PYEOF
+
+          # ── Create susfs_hooks_compat.c with correct symbol signatures ────────
+          # Pull exact signatures from the patched kernel files
+          VFS_FSTAT_SIG=$(grep -m1 "extern.*ksu_handle_vfs_fstat" fs/stat.c \
+            | sed 's/extern //' | sed 's/;//' || echo "void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)")
+          INIT_RC_SIG=$(grep -m1 "extern.*ksu_init_rc_hook" fs/read_write.c \
+            | sed 's/extern //' | sed 's/;//' || echo "void ksu_init_rc_hook(void)")
+          SYS_READ_SIG=$(grep -m1 "extern.*ksu_handle_sys_read" fs/read_write.c \
+            | sed 's/extern //' | sed 's/;//' || echo "void ksu_handle_sys_read(unsigned int fd, char __user **buf_ptr, size_t *count_ptr)")
+          EXECVEAT_SIG=$(grep -m1 "extern.*ksu_execveat_hook" fs/exec.c \
+            | sed 's/extern //' | sed 's/;//' || echo "void ksu_execveat_hook(void)")
+          INPUT_SIG=$(grep -m1 "extern.*ksu_input_hook" drivers/input/input.c \
+            | sed 's/extern //' | sed 's/;//' || echo "void ksu_input_hook(unsigned int type, unsigned int code, int value)")
+
+          cat > drivers/kernelsu/susfs_hooks_compat.c << CEOF
+          // SPDX-License-Identifier: GPL-2.0-or-later
+          // Stub implementations for syscall_hook_manager symbols when CONFIG_KSU_SUSFS=y
+          // syscall_hook_manager.c is excluded in the SUSFS build path.
+
+          #ifdef CONFIG_KSU_SUSFS
+
+          #include <linux/types.h>
+          #include <linux/fs.h>
+          #include <linux/uaccess.h>
+
+          ${VFS_FSTAT_SIG} {}
+
+          ${INIT_RC_SIG} {}
+
+          ${SYS_READ_SIG} {}
+
+          ${EXECVEAT_SIG} {}
+
+          ${INPUT_SIG} {}
+
+          void ksu_syscall_hook_manager_init(void) {}
+          void ksu_syscall_hook_manager_exit(void) {}
+
+          #endif // CONFIG_KSU_SUSFS
+          CEOF
+
+          echo "OK: created drivers/kernelsu/susfs_hooks_compat.c"
+
+          # ── Add susfs_hooks_compat.o to kernelsu Makefile ────────────────────
+          KSUFS_MK="drivers/kernelsu/Makefile"
+          STUB_LINE="obj-\$(CONFIG_KSU_SUSFS) += susfs_hooks_compat.o"
+          if ! grep -qF "$STUB_LINE" "$KSUFS_MK"; then
+            echo "$STUB_LINE" >> "$KSUFS_MK"
+            echo "OK: added susfs_hooks_compat.o to $KSUFS_MK"
+          else
+            echo "SKIP: susfs_hooks_compat.o already in $KSUFS_MK"
+          fi
+
       - name: Apply Source Fixes
         run: |
           cd "${{ env.KERNEL_DIR }}"
@@ -326,10 +394,6 @@ jobs:
             KBUILD_LDFLAGS="--orphan-handling=warn"
 
           echo "DIST_DIR=${{ env.KERNEL_DIR }}/out/arch/arm64/boot" >> $GITHUB_ENV
-
-          continue-on-error: true
-
-     
 
       - name: Package Kernel (AnyKernel3)
         run: |
