@@ -271,32 +271,9 @@ jobs:
           export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/rust/bin:$PATH"
           
-          # Fetch anti-rollback bypass libraries
           cd kernel_workspace/common
           sed -i "s/^SUBLEVEL = .*/SUBLEVEL = ${{ needs.setup.outputs.sub_level }}/" Makefile
           
-          wget -q https://raw.githubusercontent.com/cctv18/Build-GKI-16/refs/heads/main/lib/libfakestat.so
-          wget -q https://raw.githubusercontent.com/cctv18/Build-GKI-16/refs/heads/main/lib/libfaketimeMT.so
-          chmod 777 ./*.so
-          
-          export FAKESTAT="2025-05-25 12:00:00"
-          export FAKETIME="@2025-05-25 13:00:00"
-          export PRELOAD_LIBS="$(pwd)/libfakestat.so $(pwd)/libfaketimeMT.so"
-          export REAL_CLANG_PATH="$WORKDIR/kernel_workspace/clang19/bin/clang"
-          
-          echo '#!/bin/bash' > cc-wrapper
-          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
-          echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
-          echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
-          echo '$REAL_CLANG_PATH "$@"' >> cc-wrapper
-          
-          echo '#!/bin/bash' > ld-wrapper
-          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
-          echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
-          echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
-          echo 'ld.lld "$@"' >> ld-wrapper
-          chmod +x cc-wrapper ld-wrapper
-
           # Absolute path remapping to fix gendwarfksyms CRC errors
           COMMON_REAL_PATH=$(pwd -P)
           ROOT_REAL_PATH=$(dirname "$COMMON_REAL_PATH")
@@ -318,10 +295,12 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
           
-          make -j$(nproc --all) O=out gki_defconfig
+          # Standard Kernel Timestamp & Environment Spoofing
+          export KBUILD_BUILD_TIMESTAMP="Sun May 25 12:00:00 UTC 2025"
+          export KBUILD_BUILD_USER="builder"
+          export KBUILD_BUILD_HOST="build-host"
           
-          export CC="$(pwd)/cc-wrapper"
-          export LD="$(pwd)/ld-wrapper"
+          make -j$(nproc --all) O=out gki_defconfig
           make -j$(nproc --all) O=out Image
 
       - name: Package with AnyKernel3
