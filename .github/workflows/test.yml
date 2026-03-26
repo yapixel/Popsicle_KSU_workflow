@@ -306,7 +306,7 @@ jobs:
       - name: Package with AnyKernel3
         run: |
           cd kernel_workspace
-          git clone https://github.com/cctv18/AnyKernel3 --depth=1
+          git clone https://github.com/yapixel/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
           cp ./common/out/arch/arm64/boot/Image ./AnyKernel3/
           
