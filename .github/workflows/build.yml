@@ -1,4 +1,4 @@
-name: Build GKI xxksu/kowsu susfs
+name: Build GKI xxksu/kowsu susfs test
 
 on:
   workflow_dispatch:
@@ -50,7 +50,6 @@ jobs:
       create_release: ${{ steps.config.outputs.create_release }}
       sub_level: ${{ steps.config.outputs.sub_level }}
       release_tag: ${{ steps.tag.outputs.tag }}
-      release_r: ${{ steps.tag.outputs.next_r }}
     steps:
       - name: Set Build Matrix
         id: set-matrix
@@ -73,11 +72,19 @@ jobs:
       - name: Resolve Release Tag
         id: tag
         run: |
-          LATEST_TAG=$(gh api repos/${{ github.repository }}/tags --paginate \
-            | jq -r '[.[] | select(.name | startswith("popsicle-r")) | .name | ltrimstr("popsicle-r") | tonumber] | max // 0')
-          NEXT_R=$(( LATEST_TAG + 1 ))
-          echo "tag=popsicle-r${NEXT_R}" >> $GITHUB_OUTPUT
-          echo "next_r=${NEXT_R}" >> $GITHUB_OUTPUT
+          BASE_TAG="$(date +'%Y%m%d')"
+          ALL_TAGS=$(gh api repos/${{ github.repository }}/tags --paginate \
+            | jq -r '.[].name')
+          if echo "$ALL_TAGS" | grep -qx "${BASE_TAG}"; then
+            MAX_R=$(echo "$ALL_TAGS" | grep "^${BASE_TAG}-r" \
+              | sed "s/^${BASE_TAG}-r//" | sort -n | tail -1)
+            NEXT_R=$(( ${MAX_R:-1} + 1 ))
+            RELEASE_TAG="${BASE_TAG}-r${NEXT_R}"
+          else
+            RELEASE_TAG="${BASE_TAG}"
+          fi
+          echo "tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
+          echo "next_r=${RELEASE_TAG}" >> $GITHUB_OUTPUT
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -432,7 +439,8 @@ jobs:
           git clone --depth=1 --branch=gki-2.0 https://github.com/WildKernels/AnyKernel3 AnyKernel3
           cp "${{ env.DIST_DIR }}/Image" AnyKernel3/
 
-          ZIP_NAME="AK3-GKI-6.12.${{ github.event.inputs.sub_level }}-${{ matrix.variant }}-r${{ env.KSU_VER }}-susfs-${{ env.SUSFS_VERSION }}-r${{ needs.setup.outputs.release_r }}.zip"
+          BUILD_DATE="$(date +'%d%m%y')"
+          ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ github.event.inputs.sub_level }}+${{ env.KSU_VER }}-${BUILD_DATE}-susfs-${{ env.SUSFS_VERSION }}.zip"
           echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
 
           cd AnyKernel3
@@ -469,67 +477,53 @@ jobs:
           SUB="${{ needs.setup.outputs.sub_level }}"
           VARIANT_INPUT="${{ github.event.inputs.ksu_variant }}"
           SUSFS_ENABLED="${{ needs.setup.outputs.enable_susfs }}"
-
           FULL_VERSION="6.12.${SUB}"
           TIME_FMT="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
-
           echo "full_version=${FULL_VERSION}" >> $GITHUB_OUTPUT
           echo "time_fmt=${TIME_FMT}" >> $GITHUB_OUTPUT
-          echo "tag=${{ needs.setup.outputs.release_tag }}" >> $GITHUB_OUTPUT
           echo "variant_input=${VARIANT_INPUT}" >> $GITHUB_OUTPUT
           echo "susfs_enabled=${SUSFS_ENABLED}" >> $GITHUB_OUTPUT
 
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "${{ steps.meta.outputs.tag }}"
-          name: "GKI ${{ steps.meta.outputs.full_version }} · ${{ steps.meta.outputs.variant_input }} · ${{ steps.meta.outputs.tag }}"
+          tag_name: "${{ needs.setup.outputs.release_tag }}"
+          name: "GKI ${{ steps.meta.outputs.full_version }} — ${{ needs.setup.outputs.release_tag }}"
           body: |
-            ## 📱 GKI Kernel `${{ steps.meta.outputs.full_version }}`
+            ## Kernel Build Details
+            | Field          | Value |
+            | :------------- | :---- |
+            | **Kernel**     | `${{ steps.meta.outputs.full_version }}` (android16-6.12, SM8850 · popsicle) |
+            | **KSU Variant**| `${{ steps.meta.outputs.variant_input }}` |
+            | **SuSFS**      | `${{ steps.meta.outputs.susfs_enabled == 'true' && 'Enabled' || 'Disabled' }}` |
+            | **Compiler**   | Clang 19 (r536225) + arm-gnu-toolchain 14.3.rel1 |
+            | **Build Time** | ${{ steps.meta.outputs.time_fmt }} (CST) |
 
-            > **android16-6.12** for Snapdragon 8 Elite (SM8850 · popsicle)
+            ## Networking
+            | Feature | Detail |
+            | :------ | :----- |
+            | **Congestion Control** | BBR (default), CUBIC, Vegas, Westwood+, HTCP |
+            | **IPset** | Enabled |
 
-            ---
-            ### 🛠️ Build Details
-            | Attribute | Value |
-            | :--- | :--- |
-            | **Kernel Version** | `${{ steps.meta.outputs.full_version }}` |
-            | **KSU Variant** | `${{ steps.meta.outputs.variant_input }}` |
-            | **SuSFS** | `${{ steps.meta.outputs.susfs_enabled == 'true' && 'Enabled' || 'Disabled' }}` |
-            | **Build Time** | `${{ steps.meta.outputs.time_fmt }} (CST)` |
-            | **Compiler** | `Clang 19 (r536225)` |
-            | **Toolchain** | `arm-gnu-toolchain 14.3.rel1` |
+            ## Installation
+            **Method A — Recovery (recommended)**
+            1. Boot into TWRP / OrangeFox.
+            2. Flash the AnyKernel3 zip below.
+            3. Reboot.
 
-            ### 🌐 Networking
-            * **Congestion Control:** BBR (default), Brutal, NV, Westwood+, HTCP, CUBIC, Vegas
-            * **IPset:** Enabled
+            **Method B — In-Android**
+            Use [HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher) or [KernelFlasher](https://github.com/capntrips/KernelFlasher).
 
-            ---
-            ### 📦 Installation
-
-            #### Method A: Recovery (Recommended)
-            1. Boot into **TWRP / OrangeFox**.
-            2. Flash the `AnyKernel3` zip provided below.
-            3. Reboot system.
-
-            #### Method B: In-Android Flashing
-            Use [**HorizonKernelFlasher**](https://github.com/libxzr/HorizonKernelFlasher) or [**KernelFlasher**](https://github.com/capntrips/KernelFlasher).
-
-            ---
-            ### 🛡️ KernelSU Manager
-
+            ## KernelSU Manager
             | Variant | Manager |
-            | :--- | :--- |
+            | :------ | :------ |
             | **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases) |
             | **KowSU** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU/releases) |
 
-            ⚠️ A **meta-module** is required for mounting. Recommended options:
-            * [**mountify**](https://github.com/backslashxx/mountify) — recommended for xxKSU
-            * [**meta-overlayfs**](https://github.com/KernelSU-Modules-Repo/meta-overlayfs) — stable alternative
-            * [**hybrid-mount**](https://github.com/YuzakiKokuban/meta-hybrid_mount)
+            > ⚠️ A meta-module is required for mounting.
+            > Recommended: [mountify](https://github.com/backslashxx/mountify) (xxKSU) · [meta-overlayfs](https://github.com/KernelSU-Modules-Repo/meta-overlayfs) · [hybrid-mount](https://github.com/YuzakiKokuban/meta-hybrid_mount)
 
-            ---
-            _Built by [popsicle-build](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})_
+            > Built automatically via GitHub Actions — [run #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
           draft: false
           prerelease: false
           files: release_zips/*.zip
