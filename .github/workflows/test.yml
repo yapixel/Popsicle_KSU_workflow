@@ -233,6 +233,7 @@ jobs:
           # Base KSU
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KSU_DEBUG=n" >> $DEFCONFIG
+          echo "CONFIG_KSU_KPROBES_KSUD=n" >> $DEFCONFIG
           
           # xxKSU Specifics
           if [ "${{ matrix.variant }}" = "xxksu" ]; then
