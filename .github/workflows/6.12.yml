@@ -1,4 +1,4 @@
-name: Build GKI SUSFS with KowSU/xxksu
+name: Build GKI SUSFS with KowSU/xxksu 6.12
 
 on:
   workflow_dispatch:
