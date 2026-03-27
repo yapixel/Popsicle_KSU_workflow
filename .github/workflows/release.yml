@@ -7,16 +7,12 @@ on:
         description: 'The YYMMDD tag to use for the release'
         required: true
         type: string
+      # Note: gki_version and variant_input are now used for display in notes 
+      # since the matrix handles the actual logic.
       gki_version:
-        description: 'The target GKI version (e.g., 6.12.23)'
         required: true
         type: string
       variant_input:
-        description: 'The KSU variant chosen by the user'
-        required: true
-        type: string
-      susfs_enabled:
-        description: 'Whether SuSFS is globally enabled (true/false string)'
         required: true
         type: string
 
@@ -29,8 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download All Build Artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
+          # This pattern matches 'kernel-kowsu-...' and 'kernel-xxksu-...'
           pattern: kernel-*
           path: release_zips
           merge-multiple: true
@@ -43,45 +40,40 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "${{ inputs.release_tag }}"
-          name: "GKI 6.12 — ${{ inputs.release_tag }}"
+          name: "GKI 6.12 Build — ${{ inputs.release_tag }}"
           generate_release_notes: true
           body: |
-            ## Kernel Build Details
-            | Field          | Value |
-            | :------------- | :---- |
-            | **Kernel** | `6.12` (${{ inputs.gki_version }}) |
-            | **KSU Variant**| `${{ inputs.variant_input }}` |
-            | **SuSFS (KowSU)** | `${{ inputs.susfs_enabled == 'true' && 'Enabled' || 'Disabled' }}` |
-            | **SuSFS (xxKSU)** | `Disabled` |
-            | **Compiler** | Google Prebuilt Clang + Rust |
+            ## Build Overview
+            Multiple GKI artifacts have been generated for this release. Please select the `.zip` that matches your target **Sublevel** and **Security Patch**.
+
+            | Component | Details |
+            | :--- | :--- |
+            | **Kernel Base** | Linux `6.12.y` (Android 16) |
+            | **Requested Variant** | `${{ inputs.variant_input }}` |
+            | **Requested Version** | `${{ inputs.gki_version }}` |
             | **Build Time** | ${{ steps.time.outputs.time_fmt }} (CST) |
 
             ## Contributors
-            <a href="https://github.com/tiann"><img src="https://github.com/tiann.png" width="45" height="45" style="border-radius: 50%; margin-right: 10px;" alt="tiann"></a>
-            <a href="https://github.com/backslashxx"><img src="https://github.com/backslashxx.png" width="45" height="45" style="border-radius: 50%; margin-right: 10px;" alt="backslashxx"></a>
-            <a href="https://github.com/KOWX712"><img src="https://github.com/KOWX712.png" width="45" height="45" style="border-radius: 50%; margin-right: 10px;" alt="KOWX712"></a>
-            <a href="https://github.com/simonpunk"><img src="https://github.com/simonpunk.png" width="45" height="45" style="border-radius: 50%; margin-right: 10px;" alt="simonpunk"></a>
-            <a href="https://github.com/osm0sis"><img src="https://github.com/osm0sis.png" width="45" height="45" style="border-radius: 50%; margin-right: 10px;" alt="osm0sis"></a>
+            <div align="left">
+              <a href="https://github.com/tiann"><img src="https://github.com/tiann.png" width="40" height="40" style="border-radius: 50%;" alt="tiann"></a>
+              <a href="https://github.com/backslashxx"><img src="https://github.com/backslashxx.png" width="40" height="40" style="border-radius: 50%;" alt="backslashxx"></a>
+              <a href="https://github.com/KOWX712"><img src="https://github.com/KOWX712.png" width="40" height="40" style="border-radius: 50%;" alt="KOWX712"></a>
+              <a href="https://github.com/simonpunk"><img src="https://github.com/simonpunk.png" width="40" height="40" style="border-radius: 50%;" alt="simonpunk"></a>
+              <a href="https://github.com/osm0sis"><img src="https://github.com/osm0sis.png" width="40" height="40" style="border-radius: 50%;" alt="osm0sis"></a>
+            </div>
 
-            ## Installation
-            **Method A — Recovery (recommended)**
-            1. Boot into TWRP / OrangeFox.
-            2. Flash the AnyKernel3 zip below.
-            3. Reboot.
+            ## Installation & Management
+            ### 1. Flashing
+            Flash via **TWRP/OrangeFox** or use [HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher).
 
-            **Method B — In-Android**
-            Use [HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher) or [KernelFlasher](https://github.com/capntrips/KernelFlasher).
+            ### 2. KernelSU Managers
+            - **xxKSU:** [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases)
+            - **KowSU:** [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU/releases)
 
-            ## KernelSU Manager
-            | Variant | Manager |
-            | :------ | :------ |
-            | **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases) |
-            | **KowSU** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU/releases) |
-
-            > ⚠️ A meta-module is required for mounting.
-            > Recommended: [mountify](https://github.com/backslashxx/mountify) (xxKSU)
-
-            > Built automatically via GitHub Actions — [run #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            ---
+            > Built automatically via GitHub Actions — [run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
           draft: false
           prerelease: false
+          # This grabs every zip downloaded from the artifacts
           files: release_zips/*.zip
+          
