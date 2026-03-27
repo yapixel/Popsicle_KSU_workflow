@@ -115,6 +115,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           clean: false
+          submodules: true
 
       - name: Free Disk Space & Install Dependencies
         run: |
@@ -161,6 +162,7 @@ jobs:
 
           echo "Downloading Clang/Rust Toolchains for Make..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip -o clang.zip
+          
           unzip -q clang.zip -d clang19 && rm clang.zip
 
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip -o rust.zip
@@ -169,12 +171,10 @@ jobs:
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
           unzip -q build-tools.zip && rm build-tools.zip
 
-      - name: Sync SuSFS Source
+      - name: Setup SuSFS Source from Submodule
         if: env.ENABLE_SUSFS == 'true' && matrix.variant == 'kowsu'
         run: |
           SUSFS_DIR="${{ github.workspace }}/susfs4ksu"
-          git clone --depth=1 --branch=gki-android16-6.12-dev \
-            https://gitlab.com/simonpunk/susfs4ksu "$SUSFS_DIR"
           echo "SUSFS_DIR=$SUSFS_DIR" >> $GITHUB_ENV
 
           SUSFS_VERSION=$(grep -m1 'define SUSFS_VERSION' \
@@ -286,7 +286,8 @@ jobs:
           +	return 1;
           }
           EOF
-          patch -p1 --fuzz=3 < kmi_bypass.patch || {
+          patch -p1 --fuzz=3 < kmi_bypass.patch ||
+          {
             echo "Patch failed, trying sed fallback..."
             sed -i '/bad_version:/,/^}/ s/return 0;/return 1;/' kernel/module/version.c
             sed -i 's/disagrees about version of symbol/disagrees about version of symbol (bypassed)/' kernel/module/version.c
@@ -303,6 +304,7 @@ jobs:
           echo "CONFIG_RUST=y" >> $DEFCONFIG
           echo "CONFIG_ANDROID_BINDER_IPC_RUST=m" >> $DEFCONFIG
           echo 'CONFIG_LOCALVERSION="-android16-gki"' >> $DEFCONFIG
+          
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
           sed -i 's/check_defconfig//' ./common/build.config.gki
@@ -322,6 +324,7 @@ jobs:
           fi
 
           # SuSFS Specifics (Restricted to KowSU)
+          
           if [[ "${{ env.ENABLE_SUSFS }}" == "true" && "${{ matrix.variant }}" == "kowsu" ]]; then
             cat >> $DEFCONFIG <<-'EOF'
           CONFIG_KSU_SUSFS=y
@@ -501,13 +504,13 @@ jobs:
 
             **Method B — In-Android**
             Use [HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher) or [KernelFlasher](https://github.com/capntrips/KernelFlasher).
-            
+
             ## KernelSU Manager
             | Variant | Manager |
             | :------ | :------ |
             | **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases) |
             | **KowSU** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU/releases) |
-            
+
             > ⚠️ A meta-module is required for mounting.
             > Recommended: [mountify](https://github.com/backslashxx/mountify) (xxKSU)
 
