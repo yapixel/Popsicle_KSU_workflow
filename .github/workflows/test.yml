@@ -88,26 +88,27 @@ jobs:
       - name: Initialize Workspace & Sync Toolchains
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
-          
+
           echo "Cloning GKI 6.12 Source..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/android16-6.12-2025-06.zip -o common.zip
           unzip -q common.zip && mv "android_gki_kernel_common-android16-6.12-2025-06" common && rm common.zip
-          
+
           echo "Cloning Clang 19 Toolchain..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip -o clang.zip
           unzip -q clang.zip -d clang19 && rm clang.zip
-          
+
           echo "Cloning Rust 1.82.0 Toolchain..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip -o rust.zip
           unzip -q rust.zip -d rust && rm rust.zip
-          
+
           echo "Cloning Build Tools..."
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
           unzip -q build-tools.zip && rm build-tools.zip
-          
-          # Remove dirty suffix
+
+          # Fix setlocalversion: strip -dirty then hardcode the stock version suffix
+          # to exactly match the vermagic vendor modules were compiled against
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
+          sed -i '$s|echo "$res"|echo "-android16-5-g6928909e3148-abogki444322847-4k"|' common/scripts/setlocalversion
 
       - name: Sync SuSFS Source
         run: |
@@ -161,30 +162,30 @@ jobs:
       - name: Create Patch Healer
         run: |
           cat > "${{ github.workspace }}/kernel_workspace/common/heal_patch.py" << 'PYEOF'
-          import sys
-          with open(sys.argv[1], 'r', encoding='utf-8') as f:
-              lines = f.read().splitlines()
-          with open(sys.argv[1], 'w', encoding='utf-8', newline='\n') as f:
-              in_hunk = False
-              for line in lines:
-                  if line.startswith('@@ '):
-                      in_hunk = True
-                      f.write(line + '\n')
-                      continue
-                  if line.startswith(('--- ', '+++ ')):
-                      in_hunk = False
-                      f.write(line + '\n')
-                      continue
-                  if not in_hunk:
-                      f.write(line + '\n')
-                      continue
-                  if len(line) == 0:
-                      f.write(' \n')
-                  elif line[0] not in ['+', '-', ' ', '\\']:
-                      f.write(' ' + line + '\n')
-                  else:
-                      f.write(line + '\n')
-          PYEOF
+             import sys
+             with open(sys.argv[1], 'r', encoding='utf-8') as f:
+             lines = f.read().splitlines()
+             with open(sys.argv[1], 'w', encoding='utf-8', newline='\n') as f:
+             in_hunk = False
+             for line in lines:
+             if line.startswith('@@ '):
+             in_hunk = True
+             f.write(line + '\n')
+             continue
+             if line.startswith(('--- ', '+++ ')):
+             in_hunk = False
+             f.write(line + '\n')
+             continue
+             if not in_hunk:
+             f.write(line + '\n')
+            continue
+              if len(line) == 0:
+            f.write(' \n')
+             elif line[0] not in ['+', '-', ' ', '\\']:
+            f.write(' ' + line + '\n')
+            else:
+            f.write(line + '\n')
+           PYEOF
 
       - name: Apply SuSFS Patches
         if: env.ENABLE_SUSFS == 'true'
@@ -219,21 +220,22 @@ jobs:
         run: |
           cd kernel_workspace
           DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
-          
+
           # Core Bootability & Compile Flags
           echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> $DEFCONFIG
           echo "CONFIG_HEADERS_INSTALL=n" >> $DEFCONFIG
           echo "CONFIG_RUST=y" >> $DEFCONFIG
           echo "CONFIG_ANDROID_BINDER_IPC_RUST=m" >> $DEFCONFIG
           echo "CONFIG_LOCALVERSION_AUTO=n" >> $DEFCONFIG
+          echo 'CONFIG_LOCALVERSION=""' >> $DEFCONFIG
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
           sed -i 's/check_defconfig//' ./common/build.config.gki
-          
+
           # Base KSU
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KSU_DEBUG=n" >> $DEFCONFIG
-          
+
           # xxKSU Specifics
           if [ "${{ matrix.variant }}" = "xxksu" ]; then
             cat >> $DEFCONFIG <<-'EOF'
@@ -242,7 +244,7 @@ jobs:
           CONFIG_KSU_TAMPER_SYSCALL_TABLE=n
           EOF
           fi
-          
+
           # SuSFS Specifics
           if [[ "${{ env.ENABLE_SUSFS }}" == "true" ]]; then
             cat >> $DEFCONFIG <<-'EOF'
@@ -270,38 +272,34 @@ jobs:
           export PATH="$WORKDIR/kernel_workspace/clang19/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/rust/bin:$PATH"
-          
+
           cd kernel_workspace/common
           sed -i "s/^SUBLEVEL = .*/SUBLEVEL = ${{ needs.setup.outputs.sub_level }}/" Makefile
 
-          # Download the anti-rollback bypass libraries from your own repository
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so
-          chmod 777 ./*.so
-          
-          # ==========================================================
-          # STOCK KERNEL TIME SPOOFING (Based on Sept 12, 2025)
-          # ==========================================================
+          chmod +x libfakestat.so libfaketimeMT.so
+
           export FAKESTAT="2025-09-12 04:57:41"
           export FAKETIME="@2025-09-12 04:57:41"
-          
+
           export PRELOAD_LIBS="$(pwd)/libfakestat.so $(pwd)/libfaketimeMT.so"
           export REAL_CLANG_PATH="$WORKDIR/kernel_workspace/clang19/bin/clang"
-          
+
           # Create CC (Compiler) Wrapper
           echo '#!/bin/bash' > cc-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
           echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
           echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
           echo '$REAL_CLANG_PATH "$@"' >> cc-wrapper
-          
+
           # Create LD (Linker) Wrapper
           echo '#!/bin/bash' > ld-wrapper
           echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
           echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
           echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
           echo 'ld.lld "$@"' >> ld-wrapper
-          
+
           chmod +x cc-wrapper ld-wrapper
 
           # Absolute path remapping to fix gendwarfksyms CRC errors
@@ -324,14 +322,13 @@ jobs:
           export ARCH=arm64 SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
-          
+
           export KBUILD_BUILD_USER="kleaf"
           export KBUILD_BUILD_HOST="build-host"
           export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
-          
+
           make -j$(nproc --all) O=out gki_defconfig
-          
-          # Inject the wrappers for the final build
+
           export CC="$(pwd)/cc-wrapper"
           export LD="$(pwd)/ld-wrapper"
           make -j$(nproc --all) O=out Image
@@ -339,16 +336,14 @@ jobs:
       - name: Package with AnyKernel3
         run: |
           cd kernel_workspace
-          
-          # Use your fork of AnyKernel3
+
           git clone https://github.com/yapixel/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
-          
-          # Clean up any leftover cctv18 watermarks just in case
+
           sed -i '/ui_print "内核构建者: Coolapk@cctv18"/d' ./AnyKernel3/anykernel.sh || true
-          
+
           cp ./common/out/arch/arm64/boot/Image ./AnyKernel3/
-          
+
           BUILD_DATE="$(date +'%d%m%y')"
           cd AnyKernel3
           ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ needs.setup.outputs.sub_level }}+${{ env.KSU_VER }}-${BUILD_DATE}-susfs-${{ env.SUSFS_VERSION }}.zip"
