@@ -90,7 +90,7 @@ jobs:
           echo "sub_level=$SUB_LEVEL" >> $GITHUB_OUTPUT
           echo "os_patch_level=$OS_PATCH" >> $GITHUB_OUTPUT
           echo "create_release=${{ github.event.inputs.create_release }}" >> $GITHUB_OUTPUT
-          echo "release_tag=v6.12.${SUB_LEVEL}-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
+          echo "release_tag=6.12.${SUB_LEVEL}-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
   build:
     name: Build ${{ matrix.variant }} ${{ matrix.variant == 'kowsu' && needs.setup.outputs.enable_susfs == 'true' && '(SuSFS)' || '' }}
@@ -112,7 +112,7 @@ jobs:
 
     steps:
       - name: Checkout Workflow Repo (For Patches)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           clean: false
 
@@ -419,8 +419,6 @@ jobs:
           git clone https://github.com/yapixel/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
 
-          sed -i '/ui_print "内核构建者: Coolapk@cctv18"/d' ./AnyKernel3/anykernel.sh || true
-
           cp ./common/out/arch/arm64/boot/Image ./AnyKernel3/
 
           BUILD_DATE="$(date +'%d%m%y')"
@@ -440,7 +438,7 @@ jobs:
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.0
         with:
           name: kernel-${{ matrix.variant }}
           path: kernel_workspace/${{ env.ZIP_NAME }}
@@ -458,7 +456,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Download All Build Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: kernel-*
           path: release_zips
