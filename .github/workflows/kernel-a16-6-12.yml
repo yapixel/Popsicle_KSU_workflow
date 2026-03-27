@@ -138,7 +138,7 @@ jobs:
       SUB_LEVEL: ${{ matrix.version.sub }}
       OS_PATCH_LEVEL: ${{ matrix.version.patch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           clean: false
           submodules: true
@@ -342,7 +342,7 @@ jobs:
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.0
         with:
           name: kernel-kowsu-6.12.${{ matrix.version.sub }}
           path: kernel_workspace/${{ env.ZIP_NAME }}
@@ -368,7 +368,7 @@ jobs:
       SUB_LEVEL: ${{ matrix.version.sub }}
       OS_PATCH_LEVEL: ${{ matrix.version.patch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           clean: false
           submodules: true
@@ -574,7 +574,7 @@ jobs:
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7.0.0
         with:
           name: kernel-xxksu-6.12.${{ matrix.version.sub }}
           path: kernel_workspace/${{ env.ZIP_NAME }}
@@ -592,7 +592,7 @@ jobs:
 
     steps:
       - name: Download All Build Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: kernel-*
           path: release_zips
