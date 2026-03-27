@@ -1,0 +1,527 @@
+name: Build GKI Android 16 (6.12)
+
+on:
+  workflow_call:
+    inputs:
+      ksu_variant:
+        required: true
+        type: string
+      gki_version:
+        required: true
+        type: string
+      disable_susfs:
+        required: true
+        type: boolean
+      create_release:
+        required: true
+        type: boolean
+        
+  workflow_dispatch:
+    inputs:
+      ksu_variant:
+        description: 'KernelSU variant to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - kowsu
+          - xxksu
+      gki_version:
+        description: 'Target GKI Version'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - '6.12.23 (2025-05-exp)'
+          - '6.12.23 (2025-06)'
+          - '6.12.30 (2025-07)'
+          - '6.12.38 (2025-08)'
+          - '6.12.38 (2025-09)'
+          - '6.12.58 (2025-12)'
+          - '6.12.69 (2026-03)'
+          - '6.12.X (lts)'
+      disable_susfs:
+        description: 'Disable SuSFS features'
+        required: false
+        default: false
+        type: boolean
+      create_release:
+        description: 'Publish a GitHub Release'
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.config.outputs.matrix }}
+      enable_susfs: ${{ steps.config.outputs.enable_susfs }}
+      create_release: ${{ steps.config.outputs.create_release }}
+      release_tag: ${{ steps.config.outputs.release_tag }}
+    steps:
+      - name: Set Build Config, Matrix & Tag
+        id: config
+        run: |
+          # 1. Parse KSU Variant Array
+          VARIANT="${{ inputs.ksu_variant }}"
+          if [ "$VARIANT" = "all" ]; then
+            VARIANT_JSON='["kowsu","xxksu"]'
+          else
+            VARIANT_JSON="[\"$VARIANT\"]"
+          fi
+
+          # 2. Parse GKI Version Array
+          CHOICE="${{ inputs.gki_version }}"
+          if [ "$CHOICE" = "all" ]; then
+            VERSION_JSON='[{"sub":"23","patch":"2025-05-exp"},{"sub":"23","patch":"2025-06"},{"sub":"30","patch":"2025-07"},{"sub":"38","patch":"2025-08"},{"sub":"38","patch":"2025-09"},{"sub":"58","patch":"2025-12"},{"sub":"69","patch":"2026-03"},{"sub":"X","patch":"lts"}]'
+          elif [ "$CHOICE" = "6.12.X (lts)" ]; then
+            VERSION_JSON='[{"sub":"X","patch":"lts"}]'
+          else
+            SUB_LEVEL=$(echo "$CHOICE" | cut -d' ' -f1 | cut -d'.' -f3)
+            OS_PATCH=$(echo "$CHOICE" | cut -d'(' -f2 | cut -d')' -f1)
+            VERSION_JSON="[{\"sub\":\"$SUB_LEVEL\",\"patch\":\"$OS_PATCH\"}]"
+          fi
+
+          # 3. Output the combined 2D matrix
+          echo "matrix={\"variant\":$VARIANT_JSON,\"version\":$VERSION_JSON}" >> $GITHUB_OUTPUT
+
+          # Force disable SuSFS globally if ONLY xxKSU is selected
+          if [ "${{ inputs.ksu_variant }}" = "xxksu" ]; then
+            echo "enable_susfs=false" >> $GITHUB_OUTPUT
+          else
+            echo "enable_susfs=${{ inputs.disable_susfs == true && 'false' || 'true' }}" >> $GITHUB_OUTPUT
+          fi
+          
+          # YYMMDD Release Tag Logic
+          TODAY=$(date +'%y%m%d')
+          TAG_COUNT=$(git ls-remote --tags "https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" "refs/tags/${TODAY}*" | wc -l)
+          
+          if [ "$TAG_COUNT" -eq 0 ]; then
+            REL_TAG="$TODAY"
+          else
+            REL_TAG="${TODAY}r${TAG_COUNT}"
+          fi
+          
+          echo "create_release=${{ inputs.create_release }}" >> $GITHUB_OUTPUT
+          echo "release_tag=$REL_TAG" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build ${{ matrix.variant }} 6.12.${{ matrix.version.sub }} ${{ matrix.variant == 'kowsu' && needs.setup.outputs.enable_susfs == 'true' && '(SuSFS)' || '' }}
+    needs: setup
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    env:
+      ENABLE_SUSFS: ${{ matrix.variant == 'xxksu' && 'false' || needs.setup.outputs.enable_susfs }}
+      KSU_VARIANT: ${{ matrix.variant }}
+      ANDROID_VERSION: 'android16'
+      KERNEL_VERSION: '6.12'
+      SUB_LEVEL: ${{ matrix.version.sub }}
+      OS_PATCH_LEVEL: ${{ matrix.version.patch }}
+
+    steps:
+      - name: Checkout Workflow Repo & Submodules
+        uses: actions/checkout@v4
+        with:
+          clean: false
+          submodules: true
+
+      - name: Free Disk Space & Install Dependencies
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af 2>/dev/null || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            binutils python-is-python3 libssl-dev libelf-dev libdw-dev \
+            curl bison flex make git perl gcc bc zip unzip aria2
+
+      - name: Clone Scripts Repo
+        run: |
+          git clone --depth=1 https://github.com/yapixel/sh "${{ github.workspace }}/sh"
+          chmod +x "${{ github.workspace }}/sh/get_ksuver.sh"
+
+      - name: Install Repo Tool
+        run: |
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          sudo ln -sf ~/bin/repo /usr/bin/repo
+
+      - name: Initialize Workspace & Sync Google Source
+        run: |
+          mkdir -p kernel_workspace && cd kernel_workspace
+
+          FORMATTED_BRANCH="${ANDROID_VERSION}-${KERNEL_VERSION}-${OS_PATCH_LEVEL}"
+          echo "Syncing official Google kernel: common-${FORMATTED_BRANCH}"
+
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-${FORMATTED_BRANCH} --depth=1
+
+          REMOTE_BRANCH=$(git ls-remote https://android.googlesource.com/kernel/common ${FORMATTED_BRANCH})
+          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
+          
+          if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+            sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" $DEFAULT_MANIFEST_PATH
+          fi
+          
+          repo --trace sync -c -j$(nproc --all) --fail-fast --no-tags --force-sync --no-clone-bundle
+
+          sed -i 's/ -dirty//g' common/scripts/setlocalversion
+
+          echo "Downloading Clang/Rust Toolchains for Make..."
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip -o clang.zip
+          unzip -q clang.zip -d clang19 && rm clang.zip
+
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip -o rust.zip
+          unzip -q rust.zip -d rust && rm rust.zip
+
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
+          unzip -q build-tools.zip && rm build-tools.zip
+
+      - name: Setup SuSFS Source from Submodule
+        if: env.ENABLE_SUSFS == 'true' && matrix.variant == 'kowsu'
+        run: |
+          SUSFS_DIR="${{ github.workspace }}/susfs4ksu"
+          echo "SUSFS_DIR=$SUSFS_DIR" >> $GITHUB_ENV
+
+          SUSFS_VERSION=$(grep -m1 'define SUSFS_VERSION' \
+            "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" \
+            | sed 's/.*"\(.*\)"/\1/')
+          echo "SUSFS_VERSION=${SUSFS_VERSION:-unknown}" >> $GITHUB_ENV
+
+      - name: Setup KernelSU Variant (xxKSU / KowSU)
+        run: |
+          cd kernel_workspace/common
+          case "${{ matrix.variant }}" in
+            "kowsu")
+              KSU_BRANCH="master"
+              git clone --depth=1 --branch "$KSU_BRANCH" \
+                https://github.com/KOWX712/KernelSU.git KernelSU
+              ;;
+            "xxksu")
+              KSU_BRANCH="master"
+              git clone --depth=1 --branch "$KSU_BRANCH" \
+                https://github.com/backslashxx/KernelSU.git KernelSU
+              ;;
+          esac
+          echo "KSU_BRANCH=${KSU_BRANCH}" >> $GITHUB_ENV
+
+          ln -sf ../KernelSU/kernel drivers/kernelsu
+          if ! grep -q "kernelsu/" drivers/Makefile; then
+            echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          fi
+          if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then
+            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
+
+      - name: Resolve KSU Version
+        run: |
+          case "${{ matrix.variant }}" in
+            "kowsu")
+              KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "KOWX712" "KernelSU" "${{ env.KSU_BRANCH }}" || echo "unknown")
+              ;;
+            "xxksu")
+              KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "backslashxx" "KernelSU" "${{ env.KSU_BRANCH }}" || echo "unknown")
+              ;;
+          esac
+          echo "KSU_VER=${KSU_VER}" >> $GITHUB_ENV
+
+      - name: Create Patch Healer
+        run: |
+          cat > "${{ github.workspace }}/kernel_workspace/common/heal_patch.py" << 'PYEOF'
+          import sys
+          with open(sys.argv[1], 'r', encoding='utf-8') as f:
+              lines = f.read().splitlines()
+          with open(sys.argv[1], 'w', encoding='utf-8', newline='\n') as f:
+              in_hunk = False
+              for line in lines:
+                  if line.startswith('@@ '):
+                      in_hunk = True
+                      f.write(line + '\n')
+                      continue
+                  if line.startswith(('--- ', '+++ ')):
+                      in_hunk = False
+                      f.write(line + '\n')
+                      continue
+                  if not in_hunk:
+                      f.write(line + '\n')
+                      continue
+                  if len(line) == 0:
+                      f.write(' \n')
+                  elif line[0] not in ['+', '-', ' ', '\\']:
+                      f.write(' ' + line + '\n')
+                  else:
+                      f.write(line + '\n')
+          PYEOF
+
+      - name: Apply SuSFS Patches
+        if: env.ENABLE_SUSFS == 'true' && matrix.variant == 'kowsu'
+        run: |
+          cd kernel_workspace/common
+          cp "${{ env.SUSFS_DIR }}/kernel_patches/fs/susfs.c" fs/
+          cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs.h" include/linux/
+          cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs_def.h" include/linux/
+          patch -p1 < "${{ env.SUSFS_DIR }}/kernel_patches/50_add_susfs_in_gki-android16-6.12.patch"
+
+      - name: Apply xxKSU Patches
+        if: matrix.variant == 'xxksu'
+        run: |
+          cd kernel_workspace/common
+          python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.8.patch"
+          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.8.patch"
+          python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch"
+          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch"
+
+      - name: Apply KowSU Patches
+        if: matrix.variant == 'kowsu' && env.ENABLE_SUSFS == 'true'
+        run: |
+          cd kernel_workspace/common/KernelSU
+          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
+
+      - name: Apply KMI/Vermagic Bypass Patch
+        run: |
+          cd kernel_workspace/common
+          cat << 'EOF' > kmi_bypass.patch
+          --- a/kernel/module/version.c
+          +++ b/kernel/module/version.c
+          @@ -51,8 +51,8 @@
+           	return 1;
+          bad_version:
+          -	pr_warn("%s: disagrees about version of symbol %s\n", info->name, symname);
+          -	return 0;
+          +	pr_warn("%s: disagrees about version of symbol %s. (bypassed)\n", info->name, symname);
+          +	return 1;
+          }
+          EOF
+          patch -p1 --fuzz=3 < kmi_bypass.patch || {
+            echo "Patch failed, trying sed fallback..."
+            sed -i '/bad_version:/,/^}/ s/return 0;/return 1;/' kernel/module/version.c
+            sed -i 's/disagrees about version of symbol/disagrees about version of symbol (bypassed)/' kernel/module/version.c
+          }
+
+      - name: Inject Defconfig Flags
+        run: |
+          cd kernel_workspace
+          DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+
+          # Core Bootability & Compile Flags
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> $DEFCONFIG
+          echo "CONFIG_HEADERS_INSTALL=n" >> $DEFCONFIG
+          echo "CONFIG_RUST=y" >> $DEFCONFIG
+          echo "CONFIG_ANDROID_BINDER_IPC_RUST=m" >> $DEFCONFIG
+          echo 'CONFIG_LOCALVERSION="-android16-gki"' >> $DEFCONFIG
+          
+          echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
+          sed -i 's/check_defconfig//' ./common/build.config.gki
+
+          # Base KSU Logic
+          echo "CONFIG_KSU=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_DEBUG=n" >> $DEFCONFIG
+
+          # xxKSU Specifics
+          if [ "${{ matrix.variant }}" = "xxksu" ]; then
+            cat >> $DEFCONFIG <<-'EOF'
+          CONFIG_KSU_EXTRAS=y
+          CONFIG_KSU_LSM_SECURITY_HOOKS=n
+          CONFIG_KSU_TAMPER_SYSCALL_TABLE=n
+          CONFIG_KSU_KPROBES_KSUD=n
+          EOF
+          fi
+
+          # SuSFS Specifics (Restricted to KowSU)
+          if [[ "${{ env.ENABLE_SUSFS }}" == "true" && "${{ matrix.variant }}" == "kowsu" ]]; then
+            cat >> $DEFCONFIG <<-'EOF'
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y
+          EOF
+          fi
+
+      - name: Compile Kernel
+        run: |
+          WORKDIR="$(pwd)"
+          cd kernel_workspace
+          
+          export PATH="$WORKDIR/kernel_workspace/clang19/bin:$WORKDIR/kernel_workspace/build-tools/bin:$WORKDIR/kernel_workspace/rust/bin:$PATH"
+          export REAL_CLANG_PATH="$WORKDIR/kernel_workspace/clang19/bin/clang"
+          export LIBCLANG_PATH="$WORKDIR/kernel_workspace/clang19/lib"
+          
+          cd common
+          if [ "${{ env.SUB_LEVEL }}" != "X" ]; then
+            sed -i "s/^SUBLEVEL = .*/SUBLEVEL = ${{ env.SUB_LEVEL }}/" Makefile
+          fi
+
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so
+          chmod +x libfakestat.so libfaketimeMT.so 2>/dev/null || true
+
+          export FAKESTAT="2025-09-12 04:57:41"
+          export FAKETIME="@2025-09-12 04:57:41"
+
+          export PRELOAD_LIBS="$(pwd)/libfakestat.so $(pwd)/libfaketimeMT.so"
+
+          echo '#!/bin/bash' > cc-wrapper
+          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
+          echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
+          echo '$REAL_CLANG_PATH "$@"' >> cc-wrapper
+
+          echo '#!/bin/bash' > ld-wrapper
+          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
+          echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
+          echo 'ld.lld "$@"' >> ld-wrapper
+
+          chmod +x cc-wrapper ld-wrapper
+
+          COMMON_REAL_PATH=$(pwd -P)
+          ROOT_REAL_PATH=$(dirname "$COMMON_REAL_PATH")
+          KCFLAGS+=" -fdebug-prefix-map=$ROOT_REAL_PATH=."
+          KCFLAGS+=" -fmacro-prefix-map=$ROOT_REAL_PATH=."
+          KCFLAGS+=" -ffile-prefix-map=$ROOT_REAL_PATH=."
+          KCFLAGS+=" -no-canonical-prefixes -O2 -pipe -Wno-error -Wno-unused-command-line-argument -fno-stack-protector"
+          export KCFLAGS
+
+          export RUSTC="rustc"
+          export BINDGEN="bindgen"
+          export CC="clang"
+          export HOSTCC=clang
+          export LD="ld.lld"
+          export HOSTLD=ld.lld
+          export LLVM=1 LLVM_IAS=1
+          export ARCH=arm64 SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+
+          export KBUILD_BUILD_USER="kleaf"
+          export KBUILD_BUILD_HOST="build-host"
+          export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
+
+          make -j$(nproc --all) O=out gki_defconfig
+
+          export CC="$(pwd)/cc-wrapper"
+          export LD="$(pwd)/ld-wrapper"
+          make -j$(nproc --all) O=out Image
+
+      - name: Package with AnyKernel3
+        run: |
+          cd kernel_workspace
+
+          git clone https://github.com/yapixel/AnyKernel3 --depth=1
+          rm -rf ./AnyKernel3/.git
+
+          cp ./common/out/arch/arm64/boot/Image ./AnyKernel3/
+
+          BUILD_DATE="$(date +'%d%m%y')"
+          cd AnyKernel3
+          
+          # Dynamically append SuSFS version only if enabled AND variant is KowSU
+          SUSFS_SUFFIX=""
+          if [[ "${{ env.ENABLE_SUSFS }}" == "true" && "${{ matrix.variant }}" == "kowsu" ]]; then
+            SUSFS_SUFFIX="-susfs-${{ env.SUSFS_VERSION }}"
+          fi
+          
+          ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ env.SUB_LEVEL }}+${{ env.KSU_VER }}-${BUILD_DATE}${SUSFS_SUFFIX}.zip"
+          
+          # Zip the entire directory including hidden files, excluding .git
+          zip -r9 "../$ZIP_NAME" . -x ".git*"
+          
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-${{ matrix.variant }}-6.12.${{ matrix.version.sub }}
+          path: kernel_workspace/${{ env.ZIP_NAME }}
+
+  release:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs: [setup, build]
+    if: needs.setup.outputs.create_release == 'true'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download All Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: kernel-*
+          path: release_zips
+          merge-multiple: true
+
+      - name: Collect Release Metadata
+        id: meta
+        run: |
+          VARIANT_INPUT="${{ inputs.ksu_variant }}"
+          SUSFS_ENABLED="${{ needs.setup.outputs.enable_susfs }}"
+          TIME_FMT="$(TZ='Asia/Shanghai' date +'%Y-%m-%d %H:%M:%S')"
+          GKI_VERSION="${{ inputs.gki_version }}"
+          echo "gki_version=${GKI_VERSION}" >> $GITHUB_OUTPUT
+          echo "time_fmt=${TIME_FMT}" >> $GITHUB_OUTPUT
+          echo "variant_input=${VARIANT_INPUT}" >> $GITHUB_OUTPUT
+          echo "susfs_enabled=${SUSFS_ENABLED}" >> $GITHUB_OUTPUT
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "${{ needs.setup.outputs.release_tag }}"
+          name: "GKI 6.12 — ${{ needs.setup.outputs.release_tag }}"
+          body: |
+            ## Kernel Build Details
+            | Field          | Value |
+            | :------------- | :---- |
+            | **Kernel** | `6.12` (${{ steps.meta.outputs.gki_version }}) |
+            | **KSU Variant**| `${{ steps.meta.outputs.variant_input }}` |
+            | **SuSFS (KowSU)** | `${{ steps.meta.outputs.susfs_enabled == 'true' && 'Enabled' || 'Disabled' }}` |
+            | **SuSFS (xxKSU)** | `Disabled` |
+            | **Compiler** | Google Prebuilt Clang + Rust |
+            | **Build Time** | ${{ steps.meta.outputs.time_fmt }} (CST) |
+
+            ## Installation
+            **Method A — Recovery (recommended)**
+            1. Boot into TWRP / OrangeFox.
+            2. Flash the AnyKernel3 zip below.
+            3. Reboot.
+
+            **Method B — In-Android**
+            Use [HorizonKernelFlasher](https://github.com/libxzr/HorizonKernelFlasher) or [KernelFlasher](https://github.com/capntrips/KernelFlasher).
+
+            ## KernelSU Manager
+            | Variant | Manager |
+            | :------ | :------ |
+            | **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU/releases) |
+            | **KowSU** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU/releases) |
+
+            > ⚠️ A meta-module is required for mounting.
+            > Recommended: [mountify](https://github.com/backslashxx/mountify) (xxKSU)
+
+            > Built automatically via GitHub Actions — [run #${{ github.run_number }}](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          draft: false
+          prerelease: false
+          files: release_zips/*.zip
