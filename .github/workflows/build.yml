@@ -1,4 +1,4 @@
-name: Build GKI xxksu/kowsu susfs
+name: Build GKI SUSFS with KowSU/xxksu
 
 on:
   workflow_dispatch:
@@ -10,6 +10,7 @@ on:
         type: choice
         options:
           - all
+          - none
           - kowsu
           - xxksu
       disable_susfs:
@@ -17,28 +18,20 @@ on:
         required: false
         default: false
         type: boolean
-      force_clean_build:
-        description: 'Force clean build (ignore cache)'
-        required: false
-        default: false
-        type: boolean
-      create_release:
-        description: 'Create GitHub Release with artifacts'
-        required: false
-        default: true
-        type: boolean
       sub_level:
         description: 'Kernel sublevel (e.g. 23 for 6.12.23)'
         required: true
         default: '23'
         type: string
+      create_release:
+        description: 'Publish a GitHub Release'
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: write
   packages: write
-
-env:
-  KERNEL_ROOT: ${{ github.workspace }}/kernel-repo
 
 jobs:
   setup:
@@ -46,17 +39,16 @@ jobs:
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       enable_susfs: ${{ steps.config.outputs.enable_susfs }}
-      force_clean: ${{ steps.config.outputs.force_clean }}
-      create_release: ${{ steps.config.outputs.create_release }}
       sub_level: ${{ steps.config.outputs.sub_level }}
-      release_tag: ${{ steps.tag.outputs.tag }}
+      create_release: ${{ steps.config.outputs.create_release }}
+      release_tag: ${{ steps.config.outputs.release_tag }}
     steps:
       - name: Set Build Matrix
         id: set-matrix
         run: |
           VARIANT="${{ github.event.inputs.ksu_variant }}"
           if [ "$VARIANT" = "all" ]; then
-            echo 'matrix={"variant":["kowsu","xxksu"]}' >> $GITHUB_OUTPUT
+            echo 'matrix={"variant":["none","kowsu","xxksu"]}' >> $GITHUB_OUTPUT
           else
             echo "matrix={\"variant\":[\"$VARIANT\"]}" >> $GITHUB_OUTPUT
           fi
@@ -65,28 +57,9 @@ jobs:
         id: config
         run: |
           echo "enable_susfs=${{ github.event.inputs.disable_susfs == 'true' && 'false' || 'true' }}" >> $GITHUB_OUTPUT
-          echo "force_clean=${{ github.event.inputs.force_clean_build }}" >> $GITHUB_OUTPUT
-          echo "create_release=${{ github.event.inputs.create_release }}" >> $GITHUB_OUTPUT
           echo "sub_level=${{ github.event.inputs.sub_level }}" >> $GITHUB_OUTPUT
-
-      - name: Resolve Release Tag
-        id: tag
-        run: |
-          BASE_TAG="$(date +'%Y%m%d')"
-          ALL_TAGS=$(gh api repos/${{ github.repository }}/tags --paginate \
-            | jq -r '.[].name')
-          if echo "$ALL_TAGS" | grep -qx "${BASE_TAG}"; then
-            MAX_R=$(echo "$ALL_TAGS" | grep "^${BASE_TAG}-r" \
-              | sed "s/^${BASE_TAG}-r//" | sort -n | tail -1)
-            NEXT_R=$(( ${MAX_R:-1} + 1 ))
-            RELEASE_TAG="${BASE_TAG}-r${NEXT_R}"
-          else
-            RELEASE_TAG="${BASE_TAG}"
-          fi
-          echo "tag=${RELEASE_TAG}" >> $GITHUB_OUTPUT
-          echo "next_r=${RELEASE_TAG}" >> $GITHUB_OUTPUT
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "create_release=${{ github.event.inputs.create_release }}" >> $GITHUB_OUTPUT
+          echo "release_tag=v6.12.${{ github.event.inputs.sub_level }}-$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
   build:
     needs: setup
@@ -98,83 +71,52 @@ jobs:
 
     env:
       ENABLE_SUSFS: ${{ needs.setup.outputs.enable_susfs }}
-      FORCE_CLEAN: ${{ needs.setup.outputs.force_clean }}
       KSU_VARIANT: ${{ matrix.variant }}
-      IMAGE_FORMAT: "Image" # Easily change to Image.lz4 or Image.gz if your device requires it
+      ANDROID_VERSION: 'android16'
+      KERNEL_VERSION: '6.12'
 
     steps:
-      - name: Free Disk Space & Install Build Dependencies
-        run: |
-          sudo apt-get purge -yq '^aspnetcore-.*' '^dotnet-.*' '^llvm-.*' 'php.*' '^mongodb-.*' '^mysql-.*' \
-            azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel libgl1-mesa-dri \
-            'ghc-*' 'cabal-install' || true
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL \
-            /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/lib/jvm \
-            /usr/local/graalvm "$AGENT_TOOLSDIRECTORY" || true
-          docker image prune -af 2>/dev/null || true
-          sudo apt-get autoremove -yq
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            bc bison flex libssl-dev libelf-dev libdw-dev build-essential \
-            python3 python3-pip rsync curl git zip unzip libncurses-dev \
-            gawk dwarves zstd pahole kmod aria2
-
-      - name: Checkout Workflow Repo
+      - name: Checkout Workflow Repo (For Patches)
         uses: actions/checkout@v4
         with:
           clean: false
+
+      - name: Free Disk Space & Install Dependencies
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune -af 2>/dev/null || true
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            binutils python-is-python3 libssl-dev libelf-dev libdw-dev \
+            curl bison flex make git perl gcc bc zip unzip aria2
 
       - name: Clone Scripts Repo
         run: |
           git clone --depth=1 https://github.com/yapixel/sh "${{ github.workspace }}/sh"
           chmod +x "${{ github.workspace }}/sh/get_ksuver.sh"
 
-      - name: Download Clang 19 Toolchain
+      - name: Initialize Workspace & Sync Toolchains
         run: |
-          mkdir -p $HOME/clang19
-          aria2c -s16 -x16 -k1M --download-result=hide --summary-interval=0 \
-            "https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip" \
-            -o clang.zip
-          unzip -q clang.zip -d $HOME/clang19
-          rm -f clang.zip
-          echo "CLANG_BIN=$HOME/clang19/bin" >> $GITHUB_ENV
-          echo "$HOME/clang19/bin" >> $GITHUB_PATH
-          $HOME/clang19/bin/clang --version | head -1
-          $HOME/clang19/bin/ld.lld --version | head -1
+          mkdir -p kernel_workspace && cd kernel_workspace
 
-      - name: Download GNU Toolchains
-        run: |
-          mkdir -p $HOME/toolchains
-          cd $HOME/toolchains
-          
-          # Download and extract ARM64
-          wget -q https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-aarch64-none-linux-gnu.tar.xz -O tc.tar.xz
-          tar -xJf tc.tar.xz && rm tc.tar.xz
-          ARM64_DIR=$(find $HOME/toolchains -maxdepth 1 -type d -name "arm-gnu-toolchain-*aarch64*" | head -n 1)
-          echo "ARM64_TOOLCHAIN=$ARM64_DIR/bin/aarch64-none-linux-gnu-" >> $GITHUB_ENV
+          echo "Cloning GKI 6.12 Source..."
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/android16-6.12-2025-06.zip -o common.zip
+          unzip -q common.zip && mv "android_gki_kernel_common-android16-6.12-2025-06" common && rm common.zip
 
-          # Download and extract ARM32
-          wget -q https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi.tar.xz -O tc-arm.tar.xz
-          tar -xJf tc-arm.tar.xz && rm tc-arm.tar.xz
-          ARM32_DIR=$(find $HOME/toolchains -maxdepth 1 -type d -name "arm-gnu-toolchain-*arm-none-eabi*" | head -n 1)
-          echo "ARM32_TOOLCHAIN=$ARM32_DIR/bin/arm-none-eabi-" >> $GITHUB_ENV
-          
-          # Verify
-          ${ARM64_DIR}/bin/aarch64-none-linux-gnu-gcc --version | head -1
-          ${ARM32_DIR}/bin/arm-none-eabi-gcc --version | head -1
+          echo "Cloning Clang 19 Toolchain..."
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip -o clang.zip
+          unzip -q clang.zip -d clang19 && rm clang.zip
 
-      - name: Sync Kernel Source (GKI 6.12)
-        run: |
-          mkdir -p "${{ env.KERNEL_ROOT }}" && cd "${{ env.KERNEL_ROOT }}"
-          aria2c -s16 -x16 -k1M \
-            https://github.com/cctv18/android_gki_kernel_common/archive/refs/heads/android16-6.12-2025-06.zip \
-            -o common.zip
-          unzip -q common.zip
-          mv "android_gki_kernel_common-android16-6.12-2025-06" common
-          rm -f common.zip
-          echo "KERNEL_DIR=${{ env.KERNEL_ROOT }}/common" >> $GITHUB_ENV
+          echo "Cloning Rust 1.82.0 Toolchain..."
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip -o rust.zip
+          unzip -q rust.zip -d rust && rm rust.zip
+
+          echo "Cloning Build Tools..."
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
+          unzip -q build-tools.zip && rm build-tools.zip
+
+          # Remove dirty suffix only - version suffix handled via CONFIG_LOCALVERSION
+          sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
       - name: Sync SuSFS Source
         run: |
@@ -188,9 +130,10 @@ jobs:
             | sed 's/.*"\(.*\)"/\1/')
           echo "SUSFS_VERSION=${SUSFS_VERSION:-unknown}" >> $GITHUB_ENV
 
-      - name: Setup KernelSU Variant
+      - name: Setup KernelSU Variant (xxKSU / KowSU)
+        if: matrix.variant != 'none'
         run: |
-          cd "${{ env.KERNEL_DIR }}"
+          cd kernel_workspace/common
           case "${{ matrix.variant }}" in
             "kowsu")
               KSU_BRANCH="master"
@@ -215,21 +158,23 @@ jobs:
 
       - name: Resolve KSU Version
         run: |
-          case "${{ matrix.variant }}" in
-            "kowsu")
-              KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "KOWX712" "KernelSU" "${{ env.KSU_BRANCH }}" \
-                || echo "unknown")
-              ;;
-            "xxksu")
-              KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "backslashxx" "KernelSU" "${{ env.KSU_BRANCH }}" \
-                || echo "unknown")
-              ;;
-          esac
-          echo "KSU_VER=${KSU_VER}" >> $GITHUB_ENV
+          if [ "${{ matrix.variant }}" = "none" ]; then
+            echo "KSU_VER=stock" >> $GITHUB_ENV
+          else
+            case "${{ matrix.variant }}" in
+              "kowsu")
+                KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "KOWX712" "KernelSU" "${{ env.KSU_BRANCH }}" || echo "unknown")
+                ;;
+              "xxksu")
+                KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "backslashxx" "KernelSU" "${{ env.KSU_BRANCH }}" || echo "unknown")
+                ;;
+            esac
+            echo "KSU_VER=${KSU_VER}" >> $GITHUB_ENV
+          fi
 
       - name: Create Patch Healer
         run: |
-          cat > "${{ env.KERNEL_DIR }}/heal_patch.py" << 'PYEOF'
+          cat > "${{ github.workspace }}/kernel_workspace/common/heal_patch.py" << 'PYEOF'
           import sys
           with open(sys.argv[1], 'r', encoding='utf-8') as f:
               lines = f.read().splitlines()
@@ -256,9 +201,9 @@ jobs:
           PYEOF
 
       - name: Apply SuSFS Patches
-        if: env.ENABLE_SUSFS == 'true'
+        if: env.ENABLE_SUSFS == 'true' && matrix.variant != 'none'
         run: |
-          cd "${{ env.KERNEL_DIR }}"
+          cd kernel_workspace/common
           cp "${{ env.SUSFS_DIR }}/kernel_patches/fs/susfs.c" fs/
           cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs.h" include/linux/
           cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs_def.h" include/linux/
@@ -267,7 +212,7 @@ jobs:
       - name: Apply xxKSU Patches
         if: matrix.variant == 'xxksu'
         run: |
-          cd "${{ env.KERNEL_DIR }}"
+          cd kernel_workspace/common
           python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/xxksu_susfs_compat.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/xxksu_susfs_compat.patch"
           python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.8.patch"
@@ -281,128 +226,66 @@ jobs:
       - name: Apply KowSU Patches
         if: matrix.variant == 'kowsu' && env.ENABLE_SUSFS == 'true'
         run: |
-          cd "${{ env.KERNEL_DIR }}/KernelSU"
+          cd kernel_workspace/common/KernelSU
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
 
-      - name: Apply Source Fixes
+      - name: Apply KMI/Vermagic Bypass Patch
         run: |
-          cd "${{ env.KERNEL_DIR }}"
-          sed -i "s/^SUBLEVEL = .*/SUBLEVEL = ${{ github.event.inputs.sub_level }}/" Makefile
-
-          sed -i 's/next_path = strchr(s, '"'"':'"'"');/next_path = (char *)strchr(s, '"'"':'"'"');/' \
-            tools/lib/bpf/libbpf.c || true
-
-          if [ -d "drivers/kernelsu" ]; then
-            echo "subdir-ccflags-y += -fno-lto -fno-data-sections -fno-function-sections -fno-common" \
-              >> drivers/kernelsu/Makefile
-          fi
-
-          sed -i 's/echo "\$res"$/echo ""/' scripts/setlocalversion
-
-      - name: Apply Stock Config Spoof
-        run: |
-          STOCK_SRC="$GITHUB_WORKSPACE/config/stock_defconfig"
-          STOCK_DST="${{ env.KERNEL_DIR }}/arch/arm64/configs/stock_defconfig"
-          TARGET_MAKEFILE="${{ env.KERNEL_DIR }}/kernel/Makefile"
-
-          if [ ! -f "$STOCK_SRC" ]; then
-            echo "No stock_defconfig found, skipping spoof."
-            exit 0
-          fi
-
-          if [ ! -f "$TARGET_MAKEFILE" ]; then
-            echo "::error::kernel/Makefile not found: $TARGET_MAKEFILE"
-            exit 1
-          fi
-
-          cp "$STOCK_SRC" "$STOCK_DST"
-          echo "Copied stock_defconfig -> $STOCK_DST"
-
-          NEW_RULE='$(obj)/config_data: arch/arm64/configs/stock_defconfig FORCE'
-          OLD_RULE='$(obj)/config_data: $(KCONFIG_CONFIG) FORCE'
-
-          if grep -qF "$NEW_RULE" "$TARGET_MAKEFILE"; then
-            echo "config_data rule already points to stock_defconfig, skipping."
-          elif grep -qF "$OLD_RULE" "$TARGET_MAKEFILE"; then
-            sed -i 's|$(obj)/config_data: $(KCONFIG_CONFIG) FORCE|$(obj)/config_data: arch/arm64/configs/stock_defconfig FORCE|' "$TARGET_MAKEFILE"
-            echo "Patched kernel/Makefile config_data rule."
-          else
-            echo "::error::Neither old nor new rule found in $TARGET_MAKEFILE"
-            exit 1
-          fi
-
-      - name: Write Defconfig Fragment
-        run: |
-          FRAGMENT="${{ env.KERNEL_DIR }}/arch/arm64/configs/ksu_susfs.fragment"
-
-          cat > "$FRAGMENT" <<-'EOF'
-          CONFIG_KSU=y
-          CONFIG_KSU_DEBUG=n
-          CONFIG_DEBUG_INFO_BTF=n
-          CONFIG_DEBUG_INFO_BTF_MODULES=n
-          CONFIG_LTO_NONE=n
-          CONFIG_LTO_CLANG=y
-          CONFIG_LTO_CLANG_THIN=y
-          CONFIG_LTO_CLANG_FULL=n
-          CONFIG_LOCALVERSION_AUTO=n
+          cd kernel_workspace/common
+          cat << 'EOF' > kmi_bypass.patch
+          --- a/kernel/module/version.c
+          +++ b/kernel/module/version.c
+          @@ -51,8 +51,8 @@
+           	return 1;
+           
+           bad_version:
+          -	pr_warn("%s: disagrees about version of symbol %s\n", info->name, symname);
+          -	return 0;
+          +	pr_warn("%s: disagrees about version of symbol %s. (bypassed)\n", info->name, symname);
+          +	return 1;
+           }
           EOF
+          patch -p1 --fuzz=3 < kmi_bypass.patch || echo "Patch failed, trying sed fallback..."
+          sed -i '/bad_version:/,/^}/ s/return 0;/return 1;/' kernel/module/version.c
+          sed -i 's/disagrees about version of symbol/disagrees about version of symbol (bypassed)/' kernel/module/version.c
 
+      - name: Inject Defconfig Flags
+        run: |
+          cd kernel_workspace
+          DEFCONFIG="./common/arch/arm64/configs/gki_defconfig"
+
+          # Core Bootability & Compile Flags
+          echo "CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y" >> $DEFCONFIG
+          echo "CONFIG_HEADERS_INSTALL=n" >> $DEFCONFIG
+          echo "CONFIG_RUST=y" >> $DEFCONFIG
+          echo "CONFIG_ANDROID_BINDER_IPC_RUST=m" >> $DEFCONFIG
+          echo 'CONFIG_LOCALVERSION="-android16-5-g6928909e3148-abogki444322847-4k"' >> $DEFCONFIG
+          echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
+          echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
+          sed -i 's/check_defconfig//' ./common/build.config.gki
+
+          # Base KSU Logic (Aggressively scrub KSU if 'none' is selected)
+          if [ "${{ matrix.variant }}" = "none" ]; then
+            echo "Scrubbing pre-existing KSU configs from source..."
+            sed -i '/CONFIG_KSU/d' $DEFCONFIG
+            echo "CONFIG_KSU=n" >> $DEFCONFIG
+          else
+            echo "CONFIG_KSU=y" >> $DEFCONFIG
+            echo "CONFIG_KSU_DEBUG=n" >> $DEFCONFIG
+          fi
+
+          # xxKSU Specifics
           if [ "${{ matrix.variant }}" = "xxksu" ]; then
-            cat >> "$FRAGMENT" <<-'EOF'
+            cat >> $DEFCONFIG <<-'EOF'
           CONFIG_KSU_EXTRAS=y
           CONFIG_KSU_LSM_SECURITY_HOOKS=n
           CONFIG_KSU_TAMPER_SYSCALL_TABLE=n
           EOF
           fi
 
-          cat >> "$FRAGMENT" <<-'EOF'
-
-          # Networking
-          CONFIG_IP_NF_TARGET_TTL=y
-          CONFIG_IP6_NF_TARGET_HL=y
-          CONFIG_IP6_NF_MATCH_HL=y
-
-          # BBR TCP Congestion Control
-          CONFIG_TCP_CONG_ADVANCED=y
-          CONFIG_TCP_CONG_BBR=y
-          CONFIG_NET_SCH_FQ=y
-          # CONFIG_TCP_CONG_BIC is not set
-          # CONFIG_TCP_CONG_WESTWOOD is not set
-          # CONFIG_TCP_CONG_HTCP is not set
-
-          # IPv6 NAT
-          CONFIG_IP6_NF_NAT=y
-          CONFIG_IP6_NF_TARGET_MASQUERADE=y
-
-          # IPSet Support
-          CONFIG_IP_SET=y
-          CONFIG_IP_SET_MAX=65534
-          CONFIG_IP_SET_BITMAP_IP=y
-          CONFIG_IP_SET_BITMAP_IPMAC=y
-          CONFIG_IP_SET_BITMAP_PORT=y
-          CONFIG_IP_SET_HASH_IP=y
-          CONFIG_IP_SET_HASH_IPMARK=y
-          CONFIG_IP_SET_HASH_IPPORT=y
-          CONFIG_IP_SET_HASH_IPPORTIP=y
-          CONFIG_IP_SET_HASH_IPPORTNET=y
-          CONFIG_IP_SET_HASH_IPMAC=y
-          CONFIG_IP_SET_HASH_MAC=y
-          CONFIG_IP_SET_HASH_NETPORTNET=y
-          CONFIG_IP_SET_HASH_NET=y
-          CONFIG_IP_SET_HASH_NETNET=y
-          CONFIG_IP_SET_HASH_NETPORT=y
-          CONFIG_IP_SET_HASH_NETIFACE=y
-          CONFIG_IP_SET_LIST_SET=y
-
-          # Mountify support
-          CONFIG_TMPFS_XATTR=y
-          CONFIG_TMPFS_POSIX_ACL=y
-          EOF
-
-          if [ "${{ env.ENABLE_SUSFS }}" = "true" ]; then
-            cat >> "$FRAGMENT" <<-'EOF'
-
-          # SuSFS
+          # SuSFS Specifics (Only inject if not "none")
+          if [[ "${{ env.ENABLE_SUSFS }}" == "true" && "${{ matrix.variant }}" != "none" ]]; then
+            cat >> $DEFCONFIG <<-'EOF'
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
@@ -421,51 +304,95 @@ jobs:
           EOF
           fi
 
-          echo "FRAGMENT=$FRAGMENT" >> $GITHUB_ENV
-
-      - name: Configure and Build Kernel
+      - name: Compile Kernel
         run: |
-          cd "${{ env.KERNEL_DIR }}"
-          export ARCH=arm64
-          export CROSS_COMPILE="${{ env.ARM64_TOOLCHAIN }}"
-          export CROSS_COMPILE_COMPAT="${{ env.ARM32_TOOLCHAIN }}"
-          export KBUILD_BUILD_USER=kleaf
-          export KBUILD_BUILD_HOST=build-host
+          WORKDIR="$(pwd)"
+          export PATH="$WORKDIR/kernel_workspace/clang19/bin:$PATH"
+          export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
+          export PATH="$WORKDIR/kernel_workspace/rust/bin:$PATH"
+
+          cd kernel_workspace/common
+          sed -i "s/^SUBLEVEL = .*/SUBLEVEL = ${{ needs.setup.outputs.sub_level }}/" Makefile
+
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so
+          chmod +x libfakestat.so libfaketimeMT.so
+
+          export FAKESTAT="2025-09-12 04:57:41"
+          export FAKETIME="@2025-09-12 04:57:41"
+
+          export PRELOAD_LIBS="$(pwd)/libfakestat.so $(pwd)/libfaketimeMT.so"
+          export REAL_CLANG_PATH="$WORKDIR/kernel_workspace/clang19/bin/clang"
+
+          # Create CC (Compiler) Wrapper
+          echo '#!/bin/bash' > cc-wrapper
+          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> cc-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> cc-wrapper
+          echo 'export FAKETIME="'$FAKETIME'"' >> cc-wrapper
+          echo '$REAL_CLANG_PATH "$@"' >> cc-wrapper
+
+          # Create LD (Linker) Wrapper
+          echo '#!/bin/bash' > ld-wrapper
+          echo 'export LD_PRELOAD="'$PRELOAD_LIBS'"' >> ld-wrapper
+          echo 'export FAKESTAT="'$FAKESTAT'"' >> ld-wrapper
+          echo 'export FAKETIME="'$FAKETIME'"' >> ld-wrapper
+          echo 'ld.lld "$@"' >> ld-wrapper
+
+          chmod +x cc-wrapper ld-wrapper
+
+          # Absolute path remapping to fix gendwarfksyms CRC errors
+          COMMON_REAL_PATH=$(pwd -P)
+          ROOT_REAL_PATH=$(dirname "$COMMON_REAL_PATH")
+          KCFLAGS+=" -fdebug-prefix-map=$ROOT_REAL_PATH=."
+          KCFLAGS+=" -fmacro-prefix-map=$ROOT_REAL_PATH=."
+          KCFLAGS+=" -ffile-prefix-map=$ROOT_REAL_PATH=."
+          KCFLAGS+=" -no-canonical-prefixes -O2 -pipe -Wno-error -fno-stack-protector"
+          export KCFLAGS
+
+          export RUSTC="rustc"
+          export BINDGEN="bindgen"
+          export CC="clang"
+          export LIBCLANG_PATH="$WORKDIR/kernel_workspace/clang19/lib"
+          export HOSTCC=clang
+          export LD="ld.lld"
+          export HOSTLD=ld.lld
+          export LLVM=1 LLVM_IAS=1
+          export ARCH=arm64 SUBARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip
+
+          export KBUILD_BUILD_USER="kleaf"
+          export KBUILD_BUILD_HOST="build-host"
           export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
 
-          make ARCH=arm64 LLVM=1 O=out gki_defconfig
-          cat "${{ env.FRAGMENT }}" >> out/.config
-          make ARCH=arm64 LLVM=1 O=out olddefconfig
+          make -j$(nproc --all) O=out gki_defconfig
 
-          # Explicitly target the image format defined in env
-          make -j$(nproc) ARCH=arm64 LLVM=1 O=out ${{ env.IMAGE_FORMAT }} \
-            LTO=thin \
-            KBUILD_BUILD_USER=kleaf \
-            KBUILD_BUILD_HOST=build-host \
-            KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025" \
-            KBUILD_LDFLAGS="--orphan-handling=warn"
+          export CC="$(pwd)/cc-wrapper"
+          export LD="$(pwd)/ld-wrapper"
+          make -j$(nproc --all) O=out Image
 
-          echo "DIST_DIR=${{ env.KERNEL_DIR }}/out/arch/arm64/boot" >> $GITHUB_ENV
-
-      - name: Package Kernel (AnyKernel3)
+      - name: Package with AnyKernel3
         run: |
-          git clone --depth=1 --branch=gki-2.0 https://github.com/WildKernels/AnyKernel3 AnyKernel3
-          
-          # Use the targeted image format
-          cp "${{ env.DIST_DIR }}/${{ env.IMAGE_FORMAT }}" AnyKernel3/
+          cd kernel_workspace
+
+          git clone https://github.com/yapixel/AnyKernel3 --depth=1
+          rm -rf ./AnyKernel3/.git
+
+          sed -i '/ui_print "内核构建者: Coolapk@cctv18"/d' ./AnyKernel3/anykernel.sh || true
+
+          cp ./common/out/arch/arm64/boot/Image ./AnyKernel3/
 
           BUILD_DATE="$(date +'%d%m%y')"
-          ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ github.event.inputs.sub_level }}+${{ env.KSU_VER }}-${BUILD_DATE}-susfs-${{ env.SUSFS_VERSION }}.zip"
-          echo "ZIP_NAME=${ZIP_NAME}" >> $GITHUB_ENV
-
           cd AnyKernel3
-          zip -r9 "../${ZIP_NAME}" .
+          ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ needs.setup.outputs.sub_level }}+${{ env.KSU_VER }}-${BUILD_DATE}-susfs-${{ env.SUSFS_VERSION }}.zip"
+          zip -r9 "../$ZIP_NAME" *
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
           name: kernel-${{ matrix.variant }}
-          path: "${{ env.ZIP_NAME }}"
+          path: kernel_workspace/${{ env.ZIP_NAME }}
 
   release:
     name: Publish Release
