@@ -1,0 +1,153 @@
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -80,6 +80,12 @@
+ #include <trace/events/sched.h>
+ #include <trace/hooks/sched.h>
+ 
++#ifdef CONFIG_KSU
++__attribute__((hot))
++extern int ksu_handle_execveat(int *fd, struct filename **filename_ptr,
++				void *argv, void *envp, int *flags);
++#endif
++
+ static int bprm_creds_from_file(struct linux_binprm *bprm);
+ 
+ int suid_dumpable = 0;
+@@ -2066,6 +2072,9 @@
+ {
+ 	struct user_arg_ptr argv = { .ptr.native = __argv };
+ 	struct user_arg_ptr envp = { .ptr.native = __envp };
++#ifdef CONFIG_KSU
++	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
++#endif
+ 	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
+ }
+ 
+@@ -2096,6 +2105,9 @@
+ 		.is_compat = true,
+ 		.ptr.compat = __envp,
+ 	};
++#ifdef CONFIG_KSU
++	ksu_handle_execveat((int *)AT_FDCWD, &filename, &argv, &envp, 0);
++#endif
+ 	return do_execveat_common(AT_FDCWD, filename, argv, envp, 0);
+ }
+
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -37,6 +37,10 @@
+ #include "internal.h"
+ #include <trace/hooks/syscall_check.h>
+ 
++#ifdef CONFIG_KSU
++extern int ksu_handle_faccessat(int *dfd, const char __user **filename_user, int *mode, int *flags);
++#endif
++
+ int do_truncate(struct mnt_idmap *idmap, struct dentry *dentry,
+ 		loff_t length, unsigned int time_attrs, struct file *filp)
+ {
+@@ -539,17 +543,29 @@ out:
+ 
+ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
+ {
++#ifdef CONFIG_KSU
++	int flags = 0;
++	ksu_handle_faccessat(&dfd, &filename, &mode, &flags);
++#endif
+ 	return do_faccessat(dfd, filename, mode, 0);
+ }
+ 
+ SYSCALL_DEFINE4(faccessat2, int, dfd, const char __user *, filename, int, mode,
+ 		int, flags)
+ {
++#ifdef CONFIG_KSU
++	ksu_handle_faccessat(&dfd, &filename, &mode, &flags);
++#endif
+ 	return do_faccessat(dfd, filename, mode, flags);
+ }
+ 
+ SYSCALL_DEFINE2(access, const char __user *, filename, int, mode)
+ {
++#ifdef CONFIG_KSU
++	int dfd = AT_FDCWD;
++	int flags = 0;
++	ksu_handle_faccessat(&dfd, &filename, &mode, &flags);
++#endif
+ 	return do_faccessat(AT_FDCWD, filename, mode, 0);
+ }
+ 
+--- a/fs/stat.c
++++ b/fs/stat.c
+@@ -26,6 +26,12 @@
+ #include "internal.h"
+ #include "mount.h"
+ 
++#ifdef CONFIG_KSU
++__attribute__((hot))
++extern int ksu_handle_stat(int *dfd, const char __user **filename_user, int *flags);
++extern void ksu_handle_newfstat_ret(unsigned int *fd, struct stat __user **statbuf_ptr);
++#endif
++
+ /**
+  * generic_fillattr - Fill in the basic attributes from the inode struct
+  * @idmap:		idmap of the mount the inode was found from
+@@ -502,11 +508,15 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, co
+ 	struct kstat stat;
+ 	int error;
+ 
++#ifdef CONFIG_KSU
++	ksu_handle_stat(&dfd, &filename, &flag);
++#endif
+ 	error = vfs_fstatat(dfd, filename, &stat, flag);
+ 	if (error)
+ 		return error;
+ 	return cp_new_stat(&stat, statbuf);
+ }
++
+ #endif
+ 
+ SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
+@@ -517,6 +527,9 @@ SYSCALL_DEFINE2(newfstat, unsigned int,
+ 	if (!error)
+ 		error = cp_new_stat(&stat, statbuf);
+ 
++#ifdef CONFIG_KSU
++	ksu_handle_newfstat_ret(&fd, &statbuf);
++#endif
+ 	return error;
+ }
+ #endif
+@@ -791,6 +804,9 @@ SYSCALL_DEFINE5(statx,
+ 	if (lflags == AT_EMPTY_PATH && vfs_empty_path(dfd, filename))
+ 		return do_statx_fd(dfd, flags & ~AT_NO_AUTOMOUNT, mask, buffer);
+ 
++#ifdef CONFIG_KSU
++	ksu_handle_stat(&dfd, &filename, (int *)&flags);
++#endif
+ 	name = getname_flags(filename, getname_statx_lookup_flags(flags));
+ 	ret = do_statx(dfd, name, flags, mask, buffer);
+ 	putname(name);
+--- a/kernel/reboot.c
++++ b/kernel/reboot.c
+@@ -21,6 +21,10 @@
+ 
+ #include <trace/hooks/reboot.h>
+ 
++#ifdef CONFIG_KSU
++extern int ksu_handle_sys_reboot(int magic1, int magic2, unsigned int cmd, void __user **arg);
++#endif
++
+ /*
+  * this indicates whether you can reboot with ctrl-alt-del: the default is yes
+  */
+@@ -722,6 +726,10 @@ SYSCALL_DEFINE4(reboot, int, magic1, int
+ 	char buffer[256];
+ 	int ret = 0;
+ 
++#ifdef CONFIG_KSU
++	ksu_handle_sys_reboot(magic1, magic2, cmd, &arg);
++#endif
++
+ 	/* We only trust the superuser with rebooting the system. */
+ 	if (!ns_capable(pid_ns->user_ns, CAP_SYS_BOOT))
+ 		return -EPERM;
