@@ -180,9 +180,16 @@ jobs:
         if: matrix.variant == 'kowsu'
         run: |
           cd kernel_workspace/common
-          patch -p1 < "${{ github.workspace }}/.github/patches/kowsu/69_pure_manual_hooks_only.patch"
+          
+          # Heal the kernel-side manual hooks patch
+          python3 heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/69_pure_manual_hooks_only.patch"
+          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/69_pure_manual_hooks_only.patch"
+          
+          # Heal and apply the KSU-side inline patch
           cd KernelSU
-          patch -p1 < "${{ github.workspace }}/.github/patches/kowsu/supercall_inline.patch"
+          python3 ../heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/supercall_inline.patch"
+          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/supercall_inline.patch"
+
 
       - name: Apply KMI/Vermagic Bypass Logic
         run: |
