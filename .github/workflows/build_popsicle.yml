@@ -1,7 +1,6 @@
-Name: Build GKI SUSFS KowSU/xxKSU
-
-on:
-  workflow_dispatch:
+Name: Build GKI SUSFS KowSU/xxKSU 
+ on:
+   workflow_dispatch:
     inputs:
       ksu_variant:
         description: 'KernelSU variant to build'
