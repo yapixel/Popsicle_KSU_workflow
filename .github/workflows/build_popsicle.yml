@@ -380,7 +380,7 @@ jobs:
           name: kernel-${{ matrix.variant }}
           path: kernel_workspace/${{ env.ZIP_NAME }}
           
-    release:
+   release:
      name: Publish Release
      runs-on: ubuntu-latest
      needs: [setup, build]
