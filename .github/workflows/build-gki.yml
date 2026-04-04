@@ -145,7 +145,7 @@ jobs:
           esac
           echo "KSU_VER=${KSU_VER}" >> $GITHUB_ENV
 
-      - name: Patching: xxKSU (Security & Scope Hooks)
+      - name: Patching:xxKSU (Security & Scope Hooks)
         if: matrix.variant == 'xxksu'
         run: |
           cd kernel_workspace/common
@@ -167,7 +167,7 @@ jobs:
           python3 heal_patch.py "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/scope-min-hooks-v1.9.patch"
 
-      - name: Patching: KowSU + SuSFS (10+50 Logic)
+      - name: patching: KowSU + SuSFS (10+50 Logic)
         if: matrix.variant == 'kowsu+susfs'
         run: |
           cd kernel_workspace/common
