@@ -370,7 +370,8 @@ jobs:
           cp ./common/out/arch/arm64/boot/Image ./AnyKernel3/
           BUILD_DATE="$(date +'%d%m%y')"
           cd AnyKernel3
-          ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ needs.setup.outputs.sub_level }}+${{ env.KSU_VER }}-${BUILD_DATE}-susfs-${{ env.SUSFS_VERSION:-none }}.zip"
+          # Fixed the expression syntax below:
+          ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ needs.setup.outputs.sub_level }}+${{ env.KSU_VER }}-${BUILD_DATE}-susfs-${{ env.SUSFS_VERSION || 'none' }}.zip"
           zip -r9 "../$ZIP_NAME" *
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
