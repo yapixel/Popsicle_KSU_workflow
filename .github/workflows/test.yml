@@ -304,6 +304,15 @@ jobs:
           EOF
           fi
 
+      - name: Debug xxKSU LSM registration
+        if: matrix.variant == 'xxksu'
+        run: |
+         grep -rn "security_add_hooks\|lsm_info\|DEFINE_LSM" \
+         $GITHUB_WORKSPACE/kernel_workspace/common/KernelSU/kernel/ | grep -v ".orig"
+         echo "---"
+         grep -rn "CONFIG_KSU_LSM_SECURITY_HOOKS" \
+         $GITHUB_WORKSPACE/kernel_workspace/common/KernelSU/kernel/
+
       - name: "Compilation: GKI Image"
         run: |
           WORKDIR="$(pwd)"
