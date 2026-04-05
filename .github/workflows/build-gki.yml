@@ -143,28 +143,15 @@ jobs:
             *)       git clone --depth=1 --branch master https://github.com/KOWX712/KernelSU.git KernelSU ;;
           esac
 
-          # 2. Link KernelSU to the drivers directory
-          ln -sf ../KernelSU/kernel drivers/kernelsu
+          # 2. Copy KernelSU/kernel/ as a real directory (not a symlink).
+          # A real directory is required so the kernel build system's $(src)
+          # variable resolves correctly inside Kbuild, allowing KSU_KERNEL_DIR
+          # and its -I$(KSU_KERNEL_DIR)/include path to find include/uapi/app_profile.h.
+          cp -r KernelSU/kernel drivers/kernelsu
 
           # 3. Inject into Build System
           if ! grep -q "kernelsu/" drivers/Makefile; then echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile; fi
           if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig; fi
-
-          # 4. KowSU-Specific Fix (Only for KowSU variants)
-          if [[ "${{ matrix.variant }}" == "kowsu" || "${{ matrix.variant }}" == "kowsu+susfs" ]]; then
-            echo "Applying Header Fix for KowSU..."
-
-            # Step A: Create the internal UAPI structure KowSU expects.
-            # Symlink target is relative to the symlink's own location
-            # (KernelSU/kernel/include/uapi/), so 3 levels up reaches
-            # KernelSU/kernel/, then down into policy/app_profile.h.
-            mkdir -p KernelSU/kernel/include/uapi
-            ln -sf ../../../policy/app_profile.h KernelSU/kernel/include/uapi/app_profile.h
-
-            # Step B: Force the compiler to look in the KernelSU include directory
-            # so that #include "uapi/app_profile.h" resolves correctly.
-            echo 'ccflags-y += -I$(srctree)/drivers/kernelsu/include' >> drivers/kernelsu/Makefile
-          fi
 
       - name: Resolve KernelSU Version
         run: |
@@ -196,9 +183,9 @@ jobs:
           cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs.h" include/linux/
           cp "${{ env.SUSFS_DIR }}/kernel_patches/include/linux/susfs_def.h" include/linux/
           patch -p1 < "${{ env.SUSFS_DIR }}/kernel_patches/50_add_susfs_in_gki-android16-6.12.patch"
-          # KSU-side (10-)
-          cd KernelSU
-          python3 ../heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
+          # KSU-side (10-) — patch drivers/kernelsu directly (real copy, not KernelSU/ repo)
+          cd drivers/kernelsu
+          python3 ../../heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
 
       - name: "Patching: KowSU Stock (Manual Hooks & Inline)"
@@ -208,9 +195,9 @@ jobs:
           # Kernel-side Manual Hooks (69-)
           python3 heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/69_ksu_manual_hooks.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/69_ksu_manual_hooks.patch"
-          # KSU-side Inline Supercall
-          cd KernelSU
-          python3 ../heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/supercall_inline.patch"
+          # KSU-side Inline Supercall — patch drivers/kernelsu directly (real copy, not KernelSU/ repo)
+          cd drivers/kernelsu
+          python3 ../../heal_patch.py "${{ github.workspace }}/.github/patches/kowsu/supercall_inline.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/supercall_inline.patch"
 
       - name: Apply KMI/Vermagic Bypass Logic
