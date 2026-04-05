@@ -133,7 +133,7 @@ jobs:
           SUSFS_VERSION=$(grep -m1 'define SUSFS_VERSION' "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" | sed 's/.*"\(.*\)"/\1/')
           echo "SUSFS_VERSION=${SUSFS_VERSION:-unknown}" >> $GITHUB_ENV
 
-            - name: Integrate KernelSU into Source Tree
+      - name: Integrate KernelSU into Source Tree
         run: |
           cd kernel_workspace/common
           
