@@ -297,6 +297,11 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_MAP=y
           EOF
           fi
+          
+      - name: Debug KowSU exported symbols
+        run: |
+         grep -rn "ksu_handle_execveat\|ksu_handle_newfstat_ret\|ksu_handle_stat\|ksu_handle_faccessat\|ksu_handle_sys_reboot" \
+         $GITHUB_WORKSPACE/kernel_workspace/common/KernelSU/kernel/ || echo "NONE FOUND"
 
       - name: "Compilation: GKI Image"
         run: |
