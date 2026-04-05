@@ -150,29 +150,30 @@ jobs:
           if ! grep -q "kernelsu/" drivers/Makefile; then echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile; fi
           if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig; fi
 
-          # 4. KowSU-Specific Deep Physical Header Fix
+          # 4. KowSU-Specific Deep Header Fix (Applies to Stock and SuSFS variants)
           if [[ "${{ matrix.variant }}" == "kowsu" || "${{ matrix.variant }}" == "kowsu+susfs" ]]; then
-            echo "Applying Deep Physical Header Fix for KowSU Subsystem..."
+            echo "Applying Absolute Path Header Fix for KowSU Subsystem..."
             
-            # Step A: Create the internal UAPI structure and copy ALL policy headers
+            # Use absolute workspace paths to ensure O=out builds can't miss them
+            COMMON_DIR=$(pwd)
+            KSU_DIR="${COMMON_DIR}/drivers/kernelsu"
+            
+            # Step A: Create and populate the uapi directory physically
             # This fixes 'uapi/feature.h' and 'uapi/app_profile.h' missing errors
-            mkdir -p drivers/kernelsu/include/uapi
-            cp KernelSU/kernel/policy/*.h drivers/kernelsu/include/uapi/
+            mkdir -p "${KSU_DIR}/include/uapi"
+            cp KernelSU/kernel/policy/*.h "${KSU_DIR}/include/uapi/"
             
-            # Step B: Copy core headers for local includes (klog.h, arch.h, ksu.h)
-            # This handles relative #include "file.h" calls
-            cp KernelSU/kernel/include/*.h drivers/kernelsu/
+            # Step B: Copy core headers to the root for local lookups
+            # This fixes relative #include "file.h" calls
+            cp KernelSU/kernel/include/*.h "${KSU_DIR}/"
 
-            # Step C: Inject Kbuild flags (Essential for standard make O=out builds)
-            # subdir-ccflags-y ensures flags propagate down to core/, feature/, hook/, etc.
-            {
-              echo 'ccflags-y += -I$(srctree)/drivers/kernelsu/include'
-              echo 'subdir-ccflags-y += -I$(srctree)/drivers/kernelsu/include'
-              echo 'ccflags-y += -I$(srctree)/drivers/kernelsu'
-              echo 'subdir-ccflags-y += -I$(srctree)/drivers/kernelsu'
-            } >> drivers/kernelsu/Makefile
-            
-            # Step D: Global fail-safe for main kernel source and SuSFS hooks
+            # Step C: The "Nuke" Include Method
+            # Injecting flags at the very top of the Makefile for priority
+            sed -i "1i ccflags-y += -I${KSU_DIR}/include -I${KSU_DIR}" drivers/kernelsu/Makefile
+            sed -i "1i subdir-ccflags-y += -I${KSU_DIR}/include -I${KSU_DIR}" drivers/kernelsu/Makefile
+
+            # Step D: Global Kernel Include Injection
+            # Putting headers in the main include path where the compiler cannot miss them
             mkdir -p include/uapi
             cp KernelSU/kernel/policy/*.h include/uapi/
           fi
