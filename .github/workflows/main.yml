@@ -1,5 +1,4 @@
-name: Build GKI for Popsicle
-
+name: 🏗️ Build GKI · Popsicle (SM8850)
 on:
   workflow_dispatch:
     inputs:
@@ -29,65 +28,181 @@ permissions:
   packages: write
 
 jobs:
-  # 1. SETUP
+  # ─────────────────────────────────────────────
+  # 1 · SETUP
+  # ─────────────────────────────────────────────
   setup:
+    name: 🔧 Setup · Resolve Build Config
     runs-on: ubuntu-latest
     outputs:
-      release_tag: ${{ steps.config.outputs.release_tag }}
+      release_tag:       ${{ steps.config.outputs.release_tag }}
+      kernel_ver:        ${{ steps.config.outputs.kernel_ver }}
+      build_kowsu_susfs: ${{ steps.config.outputs.build_kowsu_susfs }}
+      build_kowsu:       ${{ steps.config.outputs.build_kowsu }}
+      build_xxksu:       ${{ steps.config.outputs.build_xxksu }}
     steps:
       - id: config
-        run: echo "release_tag=$(date +'%y%m%d')" >> $GITHUB_OUTPUT
+        name: Resolve variant flags & release tag
+        run: |
+          TAG=$(date +'%y%m%d')
+          echo "release_tag=${TAG}"                       >> $GITHUB_OUTPUT
+          echo "kernel_ver=6.12.${{ inputs.sub_level }}" >> $GITHUB_OUTPUT
 
-  # 2. TRIGGER SUSFS BUILD
+          VARIANT="${{ inputs.ksu_variant }}"
+
+          if [[ "$VARIANT" == "all" || "$VARIANT" == "kowsu+susfs" ]]; then
+            echo "build_kowsu_susfs=true"  >> $GITHUB_OUTPUT
+          else
+            echo "build_kowsu_susfs=false" >> $GITHUB_OUTPUT
+          fi
+
+          if [[ "$VARIANT" == "all" || "$VARIANT" == "kowsu" ]]; then
+            echo "build_kowsu=true"        >> $GITHUB_OUTPUT
+          else
+            echo "build_kowsu=false"       >> $GITHUB_OUTPUT
+          fi
+
+          if [[ "$VARIANT" == "all" || "$VARIANT" == "xxksu" ]]; then
+            echo "build_xxksu=true"        >> $GITHUB_OUTPUT
+          else
+            echo "build_xxksu=false"       >> $GITHUB_OUTPUT
+          fi
+
+  # ─────────────────────────────────────────────
+  # 2 · BUILD — KowSU + SuSFS
+  # ─────────────────────────────────────────────
   build_susfs:
+    name: 🛠️ Build · KowSU + SuSFS
     needs: setup
-    if: inputs.ksu_variant == 'all' || inputs.ksu_variant == 'kowsu+susfs'
+    if: needs.setup.outputs.build_kowsu_susfs == 'true'
     uses: ./.github/workflows/build-susfs.yml
     with:
       sub_level: ${{ inputs.sub_level }}
 
-  # 3. TRIGGER KOWSU BUILD
+  # ─────────────────────────────────────────────
+  # 3 · BUILD — KowSU (vanilla)
+  # ─────────────────────────────────────────────
   build_kowsu:
+    name: 🛠️ Build · KowSU
     needs: setup
-    if: inputs.ksu_variant == 'all' || inputs.ksu_variant == 'kowsu'
+    if: needs.setup.outputs.build_kowsu == 'true'
     uses: ./.github/workflows/build-kowsu.yml
     with:
       sub_level: ${{ inputs.sub_level }}
 
-  # 4. TRIGGER XXKSU BUILD
+  # ─────────────────────────────────────────────
+  # 4 · BUILD — xxKSU
+  # ─────────────────────────────────────────────
   build_xxksu:
+    name: 🛠️ Build · xxKSU
     needs: setup
-    if: inputs.ksu_variant == 'all' || inputs.ksu_variant == 'xxksu'
+    if: needs.setup.outputs.build_xxksu == 'true'
     uses: ./.github/workflows/build-xxksu.yml
     with:
       sub_level: ${{ inputs.sub_level }}
 
-  # 5. RELEASE
+  # ─────────────────────────────────────────────
+  # 5 · RELEASE
+  # ─────────────────────────────────────────────
   release:
+    name: 🚀 Release · Publish Artifacts
     needs: [setup, build_susfs, build_kowsu, build_xxksu]
     if: |
-      always() && 
+      always() &&
       inputs.create_release == true &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      VARIANT:    ${{ inputs.ksu_variant }}
+      KERNEL_VER: ${{ needs.setup.outputs.kernel_ver }}
+      TAG:        ${{ needs.setup.outputs.release_tag }}
+
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/download-artifact@v8
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v6
+
+      - name: 📦 Download build artifacts
+        uses: actions/download-artifact@v8
         with:
           pattern: 'kernel-*'
           path: release_zips
           merge-multiple: true
-      - name: Publish Release
+
+      - name: 📝 Compose release body
+        id: body
+        run: |
+          VARIANT="${{ inputs.ksu_variant }}"
+          KV="${{ needs.setup.outputs.kernel_ver }}"
+
+          # ── Variant table rows (only for what was built) ─────────────
+          ROWS=""
+
+          if [[ "$VARIANT" == "all" || "$VARIANT" == "kowsu+susfs" ]]; then
+            ROWS+="| **KowSU + SuSFS** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU) | [simonpunk/susfs4ksu · gki-android16-6.12](https://github.com/simonpunk/susfs4ksu/tree/gki-android16-6.12) |\n"
+          fi
+
+          if [[ "$VARIANT" == "all" || "$VARIANT" == "kowsu" ]]; then
+            ROWS+="| **KowSU** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU) | — |\n"
+          fi
+
+          if [[ "$VARIANT" == "all" || "$VARIANT" == "xxksu" ]]; then
+            ROWS+="| **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU) | — |\n"
+          fi
+
+          # ── Assemble body ─────────────────────────────────────────────
+          cat <<RELEASE_BODY > release_body.md
+          ## 📱 Popsicle GKI Kernel — \`${KV}\`
+          > **Device:** Xiaomi Popsicle · SM8850 (Snapdragon 8 Elite)
+          > **Android:** 16 · GKI \`${KV}\`
+          > **Built:** \`$(date -u +'%Y-%m-%d %H:%M UTC')\`
+
+          ---
+
+          ### 🧩 Variants Shipped
+
+          | Variant | KernelSU Source | SuSFS Source |
+          |---------|----------------|--------------|
+          $(echo -e "$ROWS")
+          ---
+
+          ### ✨ Features
+
+          | Feature | Details |
+          |---------|---------|
+          | 🔒 Root Solution | KernelSU (variant-dependent, see above) |
+          | 📂 SuSFS | Filesystem-level su hiding (where applicable) |
+          | 🌐 Networking | BBR congestion control · IPSet suite |
+          | 🔑 KMI | KMI bypass for extended module compatibility |
+          | 📦 Format | AnyKernel3 flashable \`.zip\` |
+
+          ---
+
+          ### 📲 Installation
+
+          1. Boot into a custom recovery (e.g. TWRP) **or** use a root-capable flasher
+          2. Flash the \`.zip\` matching your desired variant
+          3. Reboot and verify root via the KernelSU app
+
+          > ⚠️ **Back up your current boot image before flashing.**
+          > This kernel is provided as-is, without warranty of any kind.
+
+          ---
+
+          ### 🔗 References
+
+          - [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU)
+          - [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU)
+          - [simonpunk/susfs4ksu](https://github.com/simonpunk/susfs4ksu)
+          - [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3)
+          RELEASE_BODY
+
+      - name: 🏷️ Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: "${{ needs.setup.outputs.release_tag }}"
-          name: "GKI 6.12.${{ inputs.sub_level }} — ${{ needs.setup.outputs.release_tag }}"
-          body: |
-            ## 🚀 Popsicle GKI Release
-            - **Kernel Version:** `6.12.${{ inputs.sub_level }}`
-            - **Features:** IPSet Suite, BBR Networking, KMI Bypass.
-            - **Variants:** Built via modular workflow pipeline.
+          name: "🌟 Popsicle GKI ${{ needs.setup.outputs.kernel_ver }} · ${{ needs.setup.outputs.release_tag }}"
+          body_path: release_body.md
           files: release_zips/*.zip
