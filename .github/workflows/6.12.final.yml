@@ -107,54 +107,37 @@ jobs:
       - name: Setup KernelSU Variant
         run: |
           cd kernel_workspace/common
+          KSU_SETUP_START=$SECONDS
           
-          # ==========================================
-          # 1. kowsu Setup (Modular Tree)
-          # ==========================================
-          if [ "${{ matrix.variant }}" = "kowsu" ]; then
-            echo "Setting up KowSU..."
-            git clone --depth=1 --branch master https://github.com/KOWX712/KernelSU.git KernelSU
+          # Nuke any rogue folders to clean up the runner
+          rm -rf KernelSU drivers/kernelsu KernelSU-Next
+          
+          case "${{ matrix.variant }}" in
+            "kowsu") KSU_REPO="KOWX712/KernelSU"; KSU_BRANCH="master"; USE_SETUP_SH="true" ;;
+            "xxksu") KSU_REPO="backslashxx/KernelSU"; KSU_BRANCH="master"; USE_SETUP_SH="true" ;;
+          esac
+          
+          git clone --depth=1 --branch=$KSU_BRANCH https://github.com/$KSU_REPO.git KernelSU
+          
+          # We manually integrate KSU to prevent fork setup scripts from rogue cloning
+          if [ "$USE_SETUP_SH" = "true" ]; then
+            echo "🔗 Manually symlinking KernelSU..."
             ln -sf ../KernelSU/kernel drivers/kernelsu
-            
-            # Inject Kbuild hooks
-            if ! grep -q "kernelsu/" drivers/Makefile; then echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile; fi
-            if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig; fi
-
-            # Aggressive Header Resolution for KowSU's nested tree
-            KSU_DIR="KernelSU/kernel"
-            KSU_INC="$KSU_DIR/include"
-            
-            mkdir -p "$KSU_INC/uapi"
-            cp -f KernelSU/policy/app_profile.h "$KSU_INC/uapi/app_profile.h" 2>/dev/null || true
-            
-            find "$KSU_DIR" -type d | while read -r dir; do
-              if [[ "$dir" == "$KSU_INC"* ]]; then continue; fi
-              cp -f "$KSU_INC"/klog.h "$dir/" 2>/dev/null || true
-              cp -f "$KSU_INC"/arch.h "$dir/" 2>/dev/null || true
-              cp -f "$KSU_INC"/ksu.h "$dir/" 2>/dev/null || true
-              mkdir -p "$dir/uapi"
-              cp -f KernelSU/policy/app_profile.h "$dir/uapi/app_profile.h" 2>/dev/null || true
-            done
-
-          # ==========================================
-          # 2. xxKSU Setup (Flat Tree)
-          # ==========================================
-          elif [ "${{ matrix.variant }}" = "xxksu" ]; then
-            echo "Setting up xxKSU..."
-            git clone --depth=1 --branch master https://github.com/backslashxx/KernelSU.git KernelSU
-            ln -sf ../KernelSU/kernel drivers/kernelsu
-            
-            # Inject Kbuild hooks (xxKSU usually compiles cleanly with just this)
-            if ! grep -q "kernelsu/" drivers/Makefile; then echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile; fi
-            if ! grep -q "drivers/kernelsu/Kconfig" drivers/Kconfig; then sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig; fi
-            
-            # No header duplication needed for xxKSU
+          else
+            echo "📋 Manually copying KernelSU (No symlink)..."
+            cp -r KernelSU/kernel drivers/kernelsu
           fi
+          
+          # Add KSU to kernel makefiles
+          grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
+          grep -q "kernelsu" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          
+          echo "KSU_REPO=$KSU_REPO" >> $GITHUB_ENV && echo "KSU_BRANCH=$KSU_BRANCH" >> $GITHUB_ENV
+          echo "KSU_SETUP_TIME=$((SECONDS - KSU_SETUP_START))s" >> $GITHUB_ENV
 
       - name: Resolve KSU Version
         run: |
-          USER_REPO="${{ matrix.variant == 'kowsu' && 'KOWX712' || 'backslashxx' }}"
-          KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "$USER_REPO" "KernelSU" "master" || echo "unknown")
+          KSU_VER=$("${{ github.workspace }}/sh/get_ksuver.sh" "$KSU_REPO" "KernelSU" "master" || echo "unknown")
           echo "KSU_VER=${KSU_VER}" >> $GITHUB_ENV
 
       - name: Create Patch Healer
@@ -204,8 +187,6 @@ jobs:
           CONFIG_RUST=y
           CONFIG_LOG_BUF_SHIFT=21
           CONFIG_ANDROID_BINDER_IPC_RUST=m
-          CONFIG_KPROBES=y
-          CONFIG_HAVE_KPROBES=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
 
@@ -270,7 +251,8 @@ jobs:
           elif [ "${{ matrix.variant }}" = "kowsu" ]; then
             cat >> $DEFCONFIG <<-'EOF'
           CONFIG_KSU=y
-          CONFIG_KSU_LSM_SECURITY_HOOKS=y
+          CONFIG_KPROBES=y
+          CONFIG_HAVE_KPROBES=y
           EOF
           fi
           
@@ -358,7 +340,6 @@ jobs:
           git clone https://github.com/yapixel/AnyKernel3 --depth=1
           cp "$IMAGE" ./AnyKernel3/ && cd AnyKernel3
           
-          # ZIP Name updated: No susfs logic
           ZIP_NAME="${{ matrix.variant }}_popsicle_6.12.${{ needs.setup.outputs.sub_level }}-${{ env.KSU_VER }}.zip"
           zip -r9 "../$ZIP_NAME" *
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
