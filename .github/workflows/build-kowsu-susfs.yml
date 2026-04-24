@@ -88,6 +88,7 @@ jobs:
           # 2. KSU-side SuSFS
           cd KernelSU
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/10_enable_susfs_for_ksu.patch"
+          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/kowsu/90_fix_susfs_symbols.patch"
 
       - name:  Apply KMI Bypass
         run: |
