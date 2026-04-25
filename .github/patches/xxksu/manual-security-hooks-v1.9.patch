@@ -1,5 +1,6 @@
---- security/security.c.orig	2026-04-25 15:23:12.211300231 +0800
-+++ security/security.c	2026-04-25 17:16:22.081253570 +0800
+
+--- a/security/security.c
++++ b/security/security.c
 @@ -982,6 +982,13 @@
  	for (scall = static_calls_table.NAME;				\
  	     scall - static_calls_table.NAME < MAX_LSM_COUNT; scall++)  \
