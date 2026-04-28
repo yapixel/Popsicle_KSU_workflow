@@ -119,6 +119,9 @@ jobs:
           export CROSS_COMPILE=aarch64-none-linux-gnu-
           export CROSS_COMPILE_COMPAT=arm-none-eabi-
           export CLANG_TRIPLE=aarch64-none-linux-gnu-
+          
+          # 禁用 Clang 23 的 uninitialized variable warning as error
+          export KCFLAGS="-Wno-error=default-const-init-var-unsafe -Wno-error=uninitialized"
 
           make -j$(nproc --all) O=out gki_defconfig
           make -j$(nproc --all) O=out Image
