@@ -90,14 +90,14 @@ jobs:
           variant: "kowsu"
           enable_susfs: "false"
 
-      #- name:  Compile Kernel (Identity Spoofing)
-      #  run: |
+      # - name:  Compile Kernel (Identity Spoofing)
+      #   run: |
       #    WORKDIR="$(pwd)"
       #    REAL_CLANG="$WORKDIR/kernel_workspace/clang19/bin/clang"
       #    export PATH="$WORKDIR/kernel_workspace/clang19/bin:$WORKDIR/kernel_workspace/build-tools/bin:$WORKDIR/kernel_workspace/rust/bin:$PATH"
-
+      #
       #    cd kernel_workspace/common
-
+      #
       #    cat > cc-wrapper <<-EOF
       #    #!/bin/bash
       #    if [[ "\$*" == *"--version"* ]]; then
@@ -145,9 +145,10 @@ jobs:
           
           
           cd kernel_workspace/common
+          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/_setup_env.sh
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so
           wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so
-          chmod 777 ./*.so
+          chmod 777 ./*.so ./*.sh
           export FAKESTAT="2025-09-12 04:57:41"
           export FAKETIME="@2025-09-12 04:57:41"
           echo "FAKESTAT=$FAKESTAT" >> $GITHUB_ENV
