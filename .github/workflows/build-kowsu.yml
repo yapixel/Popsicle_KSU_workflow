@@ -53,7 +53,7 @@ jobs:
           aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz" -o gcc32.tar.xz
           mkdir -p gcc32 && tar -xJf gcc32.tar.xz --strip-components=1 -C gcc32 && rm gcc32.tar.xz
           
-          # 权限补全 (已移除 rust)
+          # 权限补全 (已彻底移除 rust)
           chmod -R +x clang23/bin/ build-tools/bin/ gcc64/bin/ gcc32/bin/
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
@@ -90,7 +90,7 @@ jobs:
           WORKDIR="$(pwd)"
           cd kernel_workspace/common
           
-          # 核心路径优先级设置 (已彻底移除 rust 路径)
+          # 核心路径优先级设置
           export PATH="$WORKDIR/kernel_workspace/clang23/bin:$WORKDIR/kernel_workspace/gcc64/bin:$WORKDIR/kernel_workspace/gcc32/bin:$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
 
           # 身份欺骗包装器
@@ -126,23 +126,24 @@ jobs:
           export CROSS_COMPILE_COMPAT=arm-none-eabi-
           export CLANG_TRIPLE=aarch64-none-linux-gnu-
 
+          # 🌟 屏蔽 Clang 23 严格未初始化警告，拯救 typecheck 宏
+          export KCFLAGS="-Wno-default-const-init-var-unsafe"
+
           # 编译元数据硬编码
           export KBUILD_BUILD_USER="kleaf"
           export KBUILD_BUILD_HOST="build-host"
           export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
 
-          # 1. 生成基础配置
+          # 1. 生成基础配置 (带全套变量)
           make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             CC="$CC" HOSTCC="$HOSTCC" CROSS_COMPILE="$CROSS_COMPILE" gki_defconfig
 
-          # =========================================================
-          # 🔪 拔掉 Rust：强制禁用配置，解决高版本 Clang 的 bindgen 崩溃
-          # =========================================================
+          # 2. 🔪 强制禁用 Rust (绕过 bindgen 解析报错)
           scripts/config --file out/.config -d CONFIG_RUST
           scripts/config --file out/.config -d CONFIG_RUST_BLK
           make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
 
-          # 2. 暴力覆写编译 (纯 C/C++)
+          # 3. 暴力覆写编译 (纯 C/C++ 架构)
           make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
             CC="$CC" LD="$LD" AR="$AR" NM="$NM" OBJCOPY="$OBJCOPY" OBJDUMP="$OBJDUMP" \
             READELF="$READELF" STRIP="$STRIP" HOSTCC="$HOSTCC" HOSTCXX="$HOSTCXX" \
