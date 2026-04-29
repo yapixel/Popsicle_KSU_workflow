@@ -39,11 +39,11 @@ jobs:
           mkdir -p clang19 && tar -xzf clang.tar.gz -C clang19 && rm clang.tar.gz
           aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip -o rust.zip
           unzip -q rust.zip -d rust && rm rust.zip
-          #aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
-          #unzip -q build-tools.zip && rm build-tools.zip
-          aria2c -s16 -x16 -k1M https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/build-tools.tar.gz -o build-tools.tar.gz
-          mkdir -p build-tools
-          tar -xzf build-tools.tar.gz linux-x86/ -C build-tools/ && rm build-tools.tar.gz
+          aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
+          unzip -q build-tools.zip && rm build-tools.zip
+          #aria2c -s16 -x16 -k1M https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/build-tools.tar.gz -o build-tools.tar.gz
+          #mkdir -p build-tools
+          #tar -xzf build-tools.tar.gz linux-x86/ -C build-tools/ && rm build-tools.tar.gz
 
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
