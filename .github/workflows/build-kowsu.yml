@@ -29,21 +29,6 @@ jobs:
             binutils python-is-python3 libssl-dev libelf-dev libdw-dev \
             curl bison flex make git perl gcc bc zip unzip aria2
 
-     # - name:  Initialize Workspace & Toolchains
-     #   run: |
-     #     mkdir -p kernel_workspace && cd kernel_workspace 
-     #     aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/android16-6.12-2025-06.tar.gz" -o common.tar.gz
-     #     mkdir -p common
-     #     tar -xzf common.tar.gz -C common 
-     #     aria2c -s16 -x16 -k1M https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/clang-r536225.tar.gz -o clang.tar.gz
-     #     mkdir -p clang19 && tar -xzf clang.tar.gz -C clang19 && rm clang.tar.gz
-     #     aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/rust.zip -o rust.zip
-     #     unzip -q rust.zip -d rust && rm rust.zip
-     #     aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
-     #     unzip -q build-tools.zip && rm build-tools.zip
-         
-     #     sed -i 's/ -dirty//g' common/scripts/setlocalversion
-
       - name:  Initialize Workspace & Toolchains
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace 
@@ -57,9 +42,8 @@ jobs:
           aria2c -s16 -x16 -k1M https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/bindgen -o rust/bin/bindgen && chmod +x rust/bin/bindgen
           aria2c -s16 -x16 -k1M https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/build-tools.tar.gz -o build-tools.tar.gz
           mkdir -p build-tools && tar -xzf build-tools.tar.gz --strip-components=1 -C build-tools/ linux-x86/ && rm build-tools.tar.gz
-
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
-       
+
       - name:  Setup KowSU
         run: |
           cd kernel_workspace/common
@@ -78,11 +62,6 @@ jobs:
           cp -f KernelSU/kernel/include/*.h include/ 2>/dev/null || true
           cp -f KernelSU/kernel/uapi/*.h include/uapi/ 2>/dev/null || true
 
-     # - name:  Apply KMI Bypass
-     #   run: |
-     #     cd kernel_workspace/common
-     #     sed -i '/bad_version:/,/^}/ s/return 0;/return 1;/' kernel/module/version.c
-
       - name:  Inject Defconfig Flags
         uses: ./.github/actions/kernel-config
         with:
@@ -91,7 +70,7 @@ jobs:
           variant: "kowsu"
           enable_susfs: "false"
 
-      - name: Compile Kernel (Make)
+      - name:  Compile Kernel (Identity Spoofing)
         run: |
           WORKDIR="$(pwd)"
           export PATH="$WORKDIR/kernel_workspace/clang19/bin:$PATH"
@@ -109,12 +88,14 @@ jobs:
           echo "Bindgen版本: $BINDGEN_VERSION"
           pahole_version=$(pahole --version 2>/dev/null | head -n1); [ -z "$pahole_version" ] && echo "pahole版本：未安装" || echo "pahole版本：$pahole_version"
           
-          
           cd kernel_workspace/common
-          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/_setup_env.sh
-          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfakestat.so
-          wget https://github.com/$GITHUB_REPOSITORY/raw/refs/heads/$GITHUB_REF_NAME/lib/libfaketimeMT.so
-          chmod 777 ./*.so ./*.sh
+          
+          # 从仓库复制 faketime 相关文件（仓库已 checkout）
+          cp ${{ github.workspace }}/_setup_env.sh ./ 2>/dev/null || true
+          cp ${{ github.workspace }}/lib/libfakestat.so ./ 2>/dev/null || true
+          cp ${{ github.workspace }}/lib/libfaketimeMT.so ./ 2>/dev/null || true
+          chmod 777 ./*.so ./*.sh 2>/dev/null || true
+          
           export FAKESTAT="2025-09-12 04:57:41"
           export FAKETIME="@2025-09-12 04:57:41"
           echo "FAKESTAT=$FAKESTAT" >> $GITHUB_ENV
@@ -127,7 +108,7 @@ jobs:
           export KBUILD_BUILD_USER="kleaf"
           export KBUILD_BUILD_HOST="build-host"
           
-          #创建 CC (编译器) 包装器 - 使用绝对路径
+          # 创建 CC (编译器) 包装器
           cat > cc-wrapper << EOF
           #!/bin/bash
           export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
@@ -136,7 +117,7 @@ jobs:
           exec $REAL_CLANG_PATH "\$@"
           EOF
 
-          #创建 LD (链接器) 包装器 - 使用绝对路径
+          # 创建 LD (链接器) 包装器
           cat > ld-wrapper << EOF
           #!/bin/bash
           export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
@@ -162,7 +143,7 @@ jobs:
           ./test-wrapper.sh stat ./Makefile
           echo "--- [Wrapper Test] 测试完毕 ---"
           chmod +x cc-wrapper ld-wrapper
-          echo "--- 编译前环境时间: $(LD_PRELOAD="$PRELOAD_LIBS" date) ---"
+          echo "--- 编译前环境时间: \$(LD_PRELOAD="\$PRELOAD_LIBS" date) ---"
           echo "--- 编译前环境文件时间戳: ---"
           LD_PRELOAD="$PRELOAD_LIBS" stat ./Makefile
           
@@ -213,18 +194,18 @@ jobs:
           export KBUILD_BUILD_USER="kleaf"
           export KBUILD_BUILD_HOST="build-host"
           
-          #在构建内核的同时清除不必要的.NET, Android NDK, Haskell, CodeQL运行库，清理空间且不阻塞后续步骤运行
+          # 在构建内核的同时清除不必要的.NET, Android NDK, Haskell, CodeQL运行库，清理空间且不阻塞后续步骤运行
           sudo rm -rf /usr/share/dotnet &
           sudo rm -rf /usr/local/lib/android &
           sudo rm -rf /opt/ghc &
           sudo rm -rf /opt/hostedtoolcache/CodeQL &
+          
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="clang" LD="ld.lld" OBJCOPY="llvm-objcopy" O=out gki_defconfig &&
-          #scripts/config --file out/.config --disable CONFIG_WERROR 2>/dev/null || true &&
           export CC="$(pwd)/cc-wrapper" && export LD="$(pwd)/ld-wrapper" &&
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" OBJCOPY="llvm-objcopy" O=out Image
           
           # 编译后时间劫持二次校验
-          echo "--- 编译后环境时间: $(LD_PRELOAD="$PRELOAD_LIBS" date) ---"
+          echo "--- 编译后环境时间: \$(LD_PRELOAD="\$PRELOAD_LIBS" date) ---"
           echo "--- 编译后环境文件时间戳: ---"
           LD_PRELOAD="$PRELOAD_LIBS" stat ./Makefile
           
