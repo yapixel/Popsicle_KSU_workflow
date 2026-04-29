@@ -49,7 +49,7 @@ jobs:
           aria2c -s16 -x16 -k1M "https://android.googlesource.com/platform/prebuilts/rust/+archive/refs/heads/main-kernel-2025.tar.gz" -o rust.tar.gz
           mkdir -p rust && tar -xzf rust.tar.gz -C rust && rm rust.tar.gz
           
-          chmod -R +x clang/bin/ build-tools/bin/ rust/bin/
+          
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
       - name: Setup KowSU
