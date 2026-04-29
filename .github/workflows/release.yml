@@ -101,7 +101,7 @@ jobs:
           RELEASE_BODY
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.0
         with:
           tag_name: "${{ inputs.release_tag }}"
           name: "🌟 Popsicle GKI ${{ inputs.kernel_ver }} · ${{ inputs.release_tag }}"
