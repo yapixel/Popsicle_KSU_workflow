@@ -90,39 +90,6 @@ jobs:
           variant: "kowsu"
           enable_susfs: "false"
 
-      # - name:  Compile Kernel (Identity Spoofing)
-      #   run: |
-      #    WORKDIR="$(pwd)"
-      #    REAL_CLANG="$WORKDIR/kernel_workspace/clang19/bin/clang"
-      #    export PATH="$WORKDIR/kernel_workspace/clang19/bin:$WORKDIR/kernel_workspace/build-tools/bin:$WORKDIR/kernel_workspace/rust/bin:$PATH"
-      #
-      #    cd kernel_workspace/common
-      #
-      #    cat > cc-wrapper <<-EOF
-      #    #!/bin/bash
-      #    if [[ "\$*" == *"--version"* ]]; then
-      #        echo "Android (14043575, +pgo, +bolt, +lto, +mlgo, based on r536225) clang version 19.0.1 (https://android.googlesource.com/toolchain/llvm-project b3a530ec6537146650e42be89f1089e9a3588460), LLD 19.0.1"
-      #        exit 0
-      #    fi
-      #    export LD_PRELOAD="\$(pwd)/libfakestat.so \$(pwd)/libfaketimeMT.so"
-      #    export FAKESTAT="2025-09-12 04:57:41"
-      #    export FAKETIME="@2025-09-12 04:57:41"
-      #    exec "$REAL_CLANG" "\$@"
-      #    EOF
-      #    chmod +x cc-wrapper
-
-      #    export KBUILD_BUILD_USER="kleaf"
-      #    export KBUILD_BUILD_HOST="build-host"
-      #    export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
-      #    export ARCH=arm64
-      #    export LLVM=1
-      #    export LLVM_IAS=1
-      #    export CROSS_COMPILE=aarch64-linux-gnu-
-      #    export CC="$(pwd)/cc-wrapper"
-      #    export LD=ld.lld
-
-      #    make -j$(nproc --all) O=out gki_defconfig
-      #    make -j$(nproc --all) O=out Image
 
 
       - name: Compile Kernel (Make)
