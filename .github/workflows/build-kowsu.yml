@@ -1,4 +1,4 @@
-name: Module Build KowSU (Pure Official GKI)
+name: Module Build KowSU
 
 on:
   workflow_call:
@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6  # 修正：同步你的最新知识，使用 v6
 
       - name: Free Disk Space & Install Dependencies
         run: |
@@ -29,44 +29,30 @@ jobs:
             binutils python-is-python3 libssl-dev libelf-dev libdw-dev \
             curl bison flex make git perl gcc bc zip unzip aria2 xz-utils
 
-      - name: Initialize Workspace & Official Toolchains
+      - name: Initialize Workspace & Toolchains
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace
           
-          # 1. 官方内核源码归档 (Android 16 6.12)
+          # 1. 源码归档
           aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/android16-6.12-2025-06.tar.gz" -o common.tar.gz
           mkdir -p common && tar -xzf common.tar.gz -C common && rm common.tar.gz
           
-          # 2. 官方 Clang 19 (r536225) 归档 - 来自 main-kernel-2025 分支
-          #aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/clang-r536225.zip -o clang.zip
-          #unzip -q clang.zip -d clang19 && rm clang.zip
-          aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/clang-r536225.tar.gz" -o clang.tar.gz
+          # 2. 官方 Clang r536225 (main-kernel-2025 分支)
+          aria2c -s16 -x16 -k1M "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025.tar.gz" -o clang.tar.gz
           mkdir -p clang && tar -xzf clang.tar.gz -C clang && rm clang.tar.gz
           
-          # 3. 官方 Build-Tools 归档 (包含 lz4, dtc, mkbootimg)
-          #aria2c -s16 -x16 -k1M https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang19-r536225/build-tools.zip -o build-tools.zip
-          #unzip -q build-tools.zip && rm build-tools.zip
+          # 3. 官方 Build-Tools (main-kernel-2025 分支)
           aria2c -s16 -x16 -k1M "https://android.googlesource.com/kernel/prebuilts/build-tools/+archive/refs/heads/main-kernel-2025.tar.gz" -o build-tools.tar.gz
           mkdir -p build-tools && tar -xzf build-tools.tar.gz -C build-tools && rm build-tools.tar.gz
           
-          # 4. 官方 Rust 归档 (与 Clang 19 严格匹配)
+          # 4. 官方 Rust (main-kernel-2025 分支)
           aria2c -s16 -x16 -k1M "https://android.googlesource.com/platform/prebuilts/rust/+archive/refs/heads/main-kernel-2025.tar.gz" -o rust.tar.gz
           mkdir -p rust && tar -xzf rust.tar.gz -C rust && rm rust.tar.gz
-
-          # 5. ARM GNU Toolchain 15.2 (64位)
-          #aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/arm-gnu-toolchain-15.2.rel1-x86_64-aarch64-none-linux-gnu.tar.xz" -o gcc64.tar.xz
-          #mkdir -p gcc64 && tar -xJf gcc64.tar.xz --strip-components=1 -C gcc64 && rm gcc64.tar.xz
-
-          # 6. ARM GNU Toolchain 15.2 (32位)
-          #aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/0/arm-gnu-toolchain-15.2.rel1-x86_64-arm-none-eabi.tar.xz" -o gcc32.tar.xz
-          #mkdir -p gcc32 && tar -xJf gcc32.tar.xz --strip-components=1 -C gcc32 && rm gcc32.tar.xz
           
-          # 权限检查与脚本清理
-          chmod -R +x clang/bin/ build-tools/bin/ rust/bin/ gcc64/bin/ gcc32/bin/
+          chmod -R +x clang/bin/ build-tools/bin/ rust/bin/
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
-
-      - name: Setup KowSU (Modular Logic)
+      - name: Setup KowSU
         run: |
           cd kernel_workspace/common
           git clone --depth=1 --branch=master https://github.com/KOWX712/KernelSU.git KernelSU
@@ -94,15 +80,12 @@ jobs:
           variant: "kowsu"
           enable_susfs: "false"
 
-      - name: Compile Kernel (Pure Official Flow)
+      - name: Compile Kernel
         run: |
           WORKDIR="$(pwd)"
           cd kernel_workspace/common
-          
-          # 极简 PATH：只留 Clang, Build-Tools 和 Rust
           export PATH="$WORKDIR/kernel_workspace/clang/bin:$WORKDIR/kernel_workspace/build-tools/bin:$WORKDIR/kernel_workspace/rust/bin:$PATH"
 
-          # 保留身份欺骗包装器，确保证书对齐
           cat > cc-wrapper <<-EOF
           #!/bin/bash
           if [[ "\$*" == *"--version"* ]]; then
@@ -113,39 +96,56 @@ jobs:
           EOF
           chmod +x cc-wrapper
 
+          # 变量全覆盖锁定
           export ARCH=arm64
           export CC="$(pwd)/cc-wrapper"
-          
-          # 标准交叉编译前缀，LLVM 会自动接管
+          export LD=ld.lld
+          export AR=llvm-ar
+          export NM=llvm-nm
+          export OBJCOPY=llvm-objcopy
+          export OBJDUMP=llvm-objdump
+          export READELF=llvm-readelf
+          export STRIP=llvm-strip
+          export HOSTCC="$(pwd)/cc-wrapper"
+          export HOSTCXX="$WORKDIR/kernel_workspace/clang/bin/clang++"
+          export HOSTLD=ld.lld
+          export HOSTAR=llvm-ar
+          export CLANG_TRIPLE=aarch64-linux-gnu-
           export CROSS_COMPILE=aarch64-linux-gnu-
-
-          # 编译元数据硬编码
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export LIBCLANG_PATH="$WORKDIR/kernel_workspace/clang/lib"
+          export KCFLAGS="-Wno-default-const-init-var-unsafe"
           export KBUILD_BUILD_USER="kleaf"
           export KBUILD_BUILD_HOST="build-host"
           export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
 
-          # 1. 生成配置 (极简调用)
-          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=$CROSS_COMPILE CC="$CC" gki_defconfig
+          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CC="$CC" HOSTCC="$HOSTCC" CROSS_COMPILE="$CROSS_COMPILE" gki_defconfig
 
-          # 2. 正式编译 (回归清爽，一切交给 LLVM)
-          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=$CROSS_COMPILE CC="$CC" Image
+          make -j$(nproc --all) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CC="$CC" LD="$LD" AR="$AR" NM="$NM" OBJCOPY="$OBJCOPY" OBJDUMP="$OBJDUMP" \
+            READELF="$READELF" STRIP="$STRIP" HOSTCC="$HOSTCC" HOSTCXX="$HOSTCXX" \
+            HOSTLD="$HOSTLD" HOSTAR="$HOSTAR" CLANG_TRIPLE="$CLANG_TRIPLE" \
+            CROSS_COMPILE="$CROSS_COMPILE" CROSS_COMPILE_COMPAT="$CROSS_COMPILE_COMPAT" \
+            Image
 
-      - name: Package & Final Check
+      - name: Package & Boot-Ready Check
         run: |
           cd kernel_workspace
           IMAGE="./common/out/arch/arm64/boot/Image"
           if [ ! -f "$IMAGE" ]; then echo "Kernel build failed!"; exit 1; fi
 
-          # 严格遵循参考脚本的打包步骤
           git clone https://github.com/yapixel/AnyKernel3 --depth=1
           cp "$IMAGE" ./AnyKernel3/
           cd AnyKernel3
-          ZIP_NAME="kowsu_popsicle_6.12_official_r536225-$(date +'%y%m%d').zip"
+
+          BUILD_DATE="$(date +'%y%m%d')"
+          ZIP_NAME="kowsu_popsicle_6.12.${{ inputs.sub_level }}-${BUILD_DATE}.zip"
           zip -r9 "../$ZIP_NAME" *
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-kowsu-official
+          name: kernel-kowsu
           path: kernel_workspace/${{ env.ZIP_NAME }}
