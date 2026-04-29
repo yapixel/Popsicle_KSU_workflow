@@ -123,33 +123,37 @@ jobs:
           export PRELOAD_LIBS="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
           export REAL_CLANG_PATH="$WORKDIR/kernel_workspace/clang19/bin/clang"
           
-          #创建 CC (编译器) 包装器 - 不使用 ccache
-          cat > cc-wrapper << 'EOF'
+          # 注入 BUILD_USER 和 BUILD_HOST
+          export KBUILD_BUILD_USER="KowSU"
+          export KBUILD_BUILD_HOST="KernelBuilder"
+          
+          #创建 CC (编译器) 包装器 - 使用绝对路径
+          cat > cc-wrapper << EOF
           #!/bin/bash
           export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
           export FAKESTAT="$FAKESTAT"
           export FAKETIME="$FAKETIME"
-          exec $REAL_CLANG_PATH "$@"
+          exec $REAL_CLANG_PATH "\$@"
           EOF
 
-          #创建 LD (链接器) 包装器
-          cat > ld-wrapper << 'EOF'
+          #创建 LD (链接器) 包装器 - 使用绝对路径
+          cat > ld-wrapper << EOF
           #!/bin/bash
           export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
           export FAKESTAT="$FAKESTAT"
           export FAKETIME="$FAKETIME"
-          exec ld.lld "$@"
+          exec ld.lld "\$@"
           EOF
           
           # 测试时间劫持测试是否正常工作
           echo "--- [Wrapper Test] 正在创建通用的时间劫持测试脚本 ---"
-          cat > test-wrapper.sh << 'EOF'
+          cat > test-wrapper.sh << EOF
           #!/bin/bash
           export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
           export FAKESTAT="$FAKESTAT"
           export FAKETIME="$FAKETIME"
           echo ">>> Wrapper 内部环境检查完毕."
-          exec "$@"
+          exec "\$@"
           EOF
           chmod +x test-wrapper.sh
           echo "--- [Wrapper Test] 正在测试 (date) 命令 ---"
@@ -158,9 +162,9 @@ jobs:
           ./test-wrapper.sh stat ./Makefile
           echo "--- [Wrapper Test] 测试完毕 ---"
           chmod +x cc-wrapper ld-wrapper
-          echo "--- 编译前环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
+          echo "--- 编译前环境时间: $(LD_PRELOAD="$PRELOAD_LIBS" date) ---"
           echo "--- 编译前环境文件时间戳: ---"
-          LD_PRELOAD=$PRELOAD_LIBS stat ./Makefile
+          LD_PRELOAD="$PRELOAD_LIBS" stat ./Makefile
           
           # 6.12内核make编译核心配置：
           # 1. 重映射物理路径 (由于6.12内核引入了Rust代码，计算内核符号版本的工具变成了gendwarfksyms，而gendwarfksyms无法正确预处理绝对路径，故我们需要手动把绝对路径重映射为相对路径，否则内核符号校验值会大面积出错)
@@ -206,9 +210,10 @@ jobs:
           export FAKESTAT="2025-09-12 04:57:41"
           export FAKETIME="@2025-09-12 04:57:41"
           export LD_PRELOAD="$SO_DIR/libfakestat.so $SO_DIR/libfaketimeMT.so"
-          export KBUILD_BUILD_USER="kleaf"
-          export KBUILD_BUILD_HOST="build-host"
-          export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
+          
+          # 重新确保 BUILD_USER 和 BUILD_HOST 不被覆盖
+          export KBUILD_BUILD_USER="KowSU"
+          export KBUILD_BUILD_HOST="KernelBuilder"
           
           #在构建内核的同时清除不必要的.NET, Android NDK, Haskell, CodeQL运行库，清理空间且不阻塞后续步骤运行
           sudo rm -rf /usr/share/dotnet &
@@ -221,9 +226,9 @@ jobs:
           make -j$(nproc --all) LLVM=1 ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- CC="$(pwd)/cc-wrapper" LD="$(pwd)/ld-wrapper" OBJCOPY="llvm-objcopy" O=out Image
           
           # 编译后时间劫持二次校验
-          echo "--- 编译后环境时间: $(LD_PRELOAD=$PRELOAD_LIBS date) ---"
+          echo "--- 编译后环境时间: $(LD_PRELOAD="$PRELOAD_LIBS" date) ---"
           echo "--- 编译后环境文件时间戳: ---"
-          LD_PRELOAD=$PRELOAD_LIBS stat ./Makefile
+          LD_PRELOAD="$PRELOAD_LIBS" stat ./Makefile
           
           echo "内核编译完成！"
           echo "编译后空间:"
