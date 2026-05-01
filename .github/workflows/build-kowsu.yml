@@ -27,7 +27,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             binutils python-is-python3 libssl-dev libelf-dev libdw-dev \
-            curl bison flex make git perl gcc bc zip unzip aria2
+            curl bison flex make git perl gcc bc zip unzip aria2 m4
 
       - name: Initialize Workspace & Toolchains
         run: |
