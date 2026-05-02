@@ -1,7 +1,6 @@
-From 9828ecbf95615c5be17946a921edd6c7126d5c19 Mon Sep 17 00:00:00 2001
-From: deepongi <infectedmushi@gmail.com>
-Date: Thu, 16 Apr 2026 10:44:00 +0900
-Subject: [PATCH] fixed for latest KowSU by Midori
+From: Midori <lv@lvlv.lv>
+Date: Sat, 02 May 2026 10:33:00 +0900
+Subject: [PATCH] Fix latest SuSFS for MidoriSU/KowSU by Midori
 
 ---
  kernel/Kbuild                     |  11 --
@@ -13,7 +12,7 @@ Subject: [PATCH] fixed for latest KowSU by Midori
  kernel/feature/kernel_umount.c    |  24 ---
  kernel/feature/sucompat.c         | 252 ++++++++++++++++++++++--------
  kernel/feature/sucompat.h         |   4 +
- kernel/hook/setuid_hook.c         |  60 ++++++-
+ kernel/hook/setuid_hook.c         |  52 ++++++-
  kernel/hook/setuid_hook.h         |   3 -
  kernel/include/ksu.h              |   1 -
  kernel/kernel                     |   1 +
@@ -32,7 +31,7 @@ Subject: [PATCH] fixed for latest KowSU by Midori
  kernel/supercall/dispatch.c       | 176 ++++++++++++++-------
  kernel/supercall/supercall.c      |  36 ++---
  kernel/supercall/supercall.h      |   1 +
- 28 files changed, 763 insertions(+), 526 deletions(-)
+ 28 files changed, 755 insertions(+), 526 deletions(-)
  create mode 120000 kernel/kernel
 
 diff --git a/kernel/Kbuild b/kernel/Kbuild
@@ -240,13 +239,13 @@ index abf3eb8d..555e22ec 100644
 -    // If the kernel has the hardening patch, X86_FEATURE_INDIRECT_SAFE must be set
 -    if (!boot_cpu_has(X86_FEATURE_INDIRECT_SAFE)) {
 -        pr_alert("*************************************************************");
--        pr_alert("**     NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
--        pr_alert("**                                                         **");
--        pr_alert("**        X86_FEATURE_INDIRECT_SAFE is not enabled!        **");
--        pr_alert("**      KernelSU will abort initialization to prevent      **");
--        pr_alert("**                     kernel panic.                       **");
--        pr_alert("**                                                         **");
--        pr_alert("**     NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
+-        pr_alert("** NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
+-        pr_alert("** **");
+-        pr_alert("** X86_FEATURE_INDIRECT_SAFE is not enabled!        **");
+-        pr_alert("** KernelSU will abort initialization to prevent      **");
+-        pr_alert("** kernel panic.                       **");
+-        pr_alert("** **");
+-        pr_alert("** NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
 -        pr_alert("*************************************************************");
 -        return -ENOSYS;
 -    }
@@ -260,7 +259,7 @@ index abf3eb8d..555e22ec 100644
 -
  #ifdef CONFIG_KSU_DEBUG
      pr_alert("*************************************************************");
-     pr_alert("**     NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
+     pr_alert("** NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE NOTICE    **");
 @@ -119,54 +89,27 @@ int __init kernelsu_init(void)
          pr_err("prepare cred failed!\n");
      }
@@ -871,7 +870,7 @@ index d3f3ac49..98df2bc0 100644
  
  #include "policy/allowlist.h"
  #include "hook/setuid_hook.h"
-@@ -18,19 +20,46 @@
+@@ -18,19 +20,36 @@
  #include "manager/manager_identity.h"
  #include "infra/seccomp_cache.h"
  #include "supercall/supercall.h"
@@ -880,21 +879,11 @@ index d3f3ac49..98df2bc0 100644
  
 -int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
 +extern u32 susfs_zygote_sid;
-+extern struct cred *ksu_cred;
-+
-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-+extern void susfs_run_sus_path_loop(void);
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_PATH
++extern struct work_struct susfs_extra_works;
 +
 +static void ksu_handle_extra_susfs_work(void)
 +{
-+    const struct cred *saved = override_creds(ksu_cred);
-+
-+#ifdef CONFIG_KSU_SUSFS_SUS_PATH
-+    susfs_run_sus_path_loop();
-+#endif // #ifdef CONFIG_KSU_SUSFS_SUS_PATH
-+
-+    revert_creds(saved);
++    schedule_work(&susfs_extra_works);
 +}
 +
 +int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)
@@ -923,7 +912,7 @@ index d3f3ac49..98df2bc0 100644
          spin_unlock_irq(&current->sighand->siglock);
  
          pr_info("install fd for manager: %d\n", new_uid);
-@@ -38,20 +67,35 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
+@@ -38,20 +49,35 @@ int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)
          return 0;
      }
  
