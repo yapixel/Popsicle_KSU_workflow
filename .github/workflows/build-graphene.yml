@@ -39,8 +39,8 @@ jobs:
           git fetch --depth=1 origin tag 2025063000
           git checkout 2025063000
           
-          # 只删除 graphene 自定义的 commit hash 后缀，保留其他信息
-          sed -i 's/-g[0-9a-f]\{12\}$//' scripts/setlocalversion
+          # 强制截断版本字符串到 63 字符，避免超过 64 字符限制
+          sed -i '/echo "$\{res\}${EXTRAVERSION}"/a\res=$(echo $res | cut -c1-63)' scripts/setlocalversion
           
           cd ..
           
