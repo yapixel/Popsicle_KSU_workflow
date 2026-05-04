@@ -81,7 +81,7 @@ jobs:
           # LSM SELinux 修复
           if [ -f "${{ github.workspace }}/.github/patches/xxksu/lsm_security.patch" ]; then
             echo "Applying lsm_security.patch..."
-            patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/lsm_count-h.patch"
+            patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/lsm_security.patch"
           else
             echo "⚠️  lsm_security.patch not found, skipping..."
           fi
