@@ -7,7 +7,7 @@ on:
         description: 'Kernel sub level (e.g. 2025-06)'
         required: true
         type: string
-        default: '2025-06'
+        default: '23'
 
 jobs:
   build:
