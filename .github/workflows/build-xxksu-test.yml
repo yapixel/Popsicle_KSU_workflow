@@ -78,12 +78,12 @@ jobs:
             echo "⚠️  scope-min-manual-hooks-v2.0.patch not found, skipping..."
           fi
           
-          # LSM count SELinux 修复
-          if [ -f "${{ github.workspace }}/.github/patches/xxksu/lsm_count-h.patch" ]; then
-            echo "Applying lsm_count-h.patch..."
+          # LSM SELinux 修复
+          if [ -f "${{ github.workspace }}/.github/patches/xxksu/lsm_security.patch" ]; then
+            echo "Applying lsm_security.patch..."
             patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/lsm_count-h.patch"
           else
-            echo "⚠️  lsm_count-h.patch not found, skipping..."
+            echo "⚠️  lsm_security.patch not found, skipping..."
           fi
 
       - name: Inject Defconfig Flags (kernel-config action)
