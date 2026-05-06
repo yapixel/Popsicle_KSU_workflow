@@ -1,4 +1,4 @@
-name: Module Build xxKSU
+name: Build GKI xxKSU
 
 permissions:
   contents: write
@@ -21,7 +21,7 @@ on:
 
 jobs:
   build:
-    name: xxKSU 6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '100' }} (2025-06)
+    name: xxKSU 6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '23' }} (2025-06)
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
@@ -85,6 +85,22 @@ jobs:
           cd kernel_workspace/common
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.9.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/scope-min-manual-hooks-v2.0.patch"
+
+      - name: Get KSU Version
+        id: ksu_ver
+        run: |
+          git clone --depth=1 https://github.com/TheSillyOk/sh.git scripts
+          KSU_VER=$(./scripts/get_ksuver.sh "backslashxx" "KernelSU" "master" || echo "unknown")
+          echo "KSU version: $KSU_VER"
+          echo "ksu_ver=$KSU_VER" >> $GITHUB_OUTPUT
+
+      - name: Get Kernel Short Hash
+        id: kernel_hash
+        run: |
+          cd kernel_workspace/common
+          SHORT_HASH=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          echo "Kernel short hash: $SHORT_HASH"
+          echo "short_hash=$SHORT_HASH" >> $GITHUB_OUTPUT
 
       - name: Inject Defconfig Flags
         uses: ./.github/actions/kernel-config
@@ -163,8 +179,11 @@ jobs:
           git clone https://github.com/yapixel/AnyKernel3 --depth=1
           cp "$IMAGE" ./AnyKernel3/ && cd AnyKernel3
 
-          BUILD_DATE="$(date +'%y%m%d')"
-          ZIP_NAME="xxksu_popsicle_6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '100' }}-${RELEASE_TAG}-${BUILD_DATE}.zip"
+          SUB="${{ inputs.sub_level || github.event.inputs.sub_level || '100' }}"
+          KSU_VER="${{ steps.ksu_ver.outputs.ksu_ver }}"
+          SHORT_HASH="${{ steps.kernel_hash.outputs.short_hash }}"
+          
+          ZIP_NAME="KSU_popsicle_6.12.${SUB}_${KSU_VER#v}_${SHORT_HASH}.zip"
           zip -r9 "../$ZIP_NAME" *
           cd ..
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
