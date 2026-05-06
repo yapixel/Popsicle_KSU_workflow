@@ -20,20 +20,20 @@ runs:
         
         if [ "$REAL_VERSION" = "$TARGET_VERSION" ]; then
           echo "Clang version is already $TARGET_VERSION, no wrapper needed"
-          cat > cc-wrapper << 'EOF'
-          #!/bin/bash
-          exec clang "$@"
-          EOF
+          {
+            echo '#!/bin/bash'
+            echo 'exec clang "$@"'
+          } > cc-wrapper
         else
           echo "Clang version is $REAL_VERSION, creating wrapper to spoof as $TARGET_VERSION"
-          cat > cc-wrapper << 'EOF'
-          #!/bin/bash
-          if [[ "$*" == *"--version"* ]]; then
-              echo "Android (14043575, +pgo, +bolt, +lto, +mlgo, based on r536225) clang version 19.0.1 (https://android.googlesource.com/toolchain/llvm-project b3a530ec6537146650e42be89f1089e9a3588460)"
-              exit 0
-          fi
-          exec clang "$@"
-          EOF
+          {
+            echo '#!/bin/bash'
+            echo 'if [[ "$*" == *"--version"* ]]; then'
+            echo '    echo "Android (14043575, +pgo, +bolt, +lto, +mlgo, based on r536225) clang version 19.0.1 (https://android.googlesource.com/toolchain/llvm-project b3a530ec6537146650e42be89f1089e9a3588460)"'
+            echo '    exit 0'
+            echo 'fi'
+            echo 'exec clang "$@"'
+          } > cc-wrapper
         fi
         
         chmod +x cc-wrapper
