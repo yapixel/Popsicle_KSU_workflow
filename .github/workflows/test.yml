@@ -1,4 +1,4 @@
-name: Test Build  xxKSU
+name: Test Build xxKSU
 
 permissions:
   contents: write
@@ -9,6 +9,10 @@ on:
       sub_level:
         required: true
         type: string
+      ksu_branch:
+        required: false
+        type: string
+        default: 'master'
   push:
     branches: [ main ]
   workflow_dispatch:
@@ -18,6 +22,14 @@ on:
         required: true
         type: string
         default: '23'
+      ksu_branch:
+        description: 'xxKSU branch (master/staging)'
+        required: true
+        type: choice
+        options:
+          - master
+          - staging
+        default: 'master'
 
 jobs:
   build:
@@ -75,7 +87,7 @@ jobs:
       - name: Setup xxKSU
         run: |
           cd kernel_workspace/common
-          git clone --depth=1 --branch=staging https://github.com/backslashxx/KernelSU.git KernelSU
+          git clone --depth=1 --branch=${{ inputs.ksu_branch || github.event.inputs.ksu_branch || 'master' }} https://github.com/backslashxx/KernelSU.git KernelSU
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           grep -q "kernelsu" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
@@ -90,7 +102,8 @@ jobs:
         id: ksu_ver
         run: |
           git clone --depth=1 https://github.com/TheSillyOk/sh.git scripts
-          KSU_VER=$(./scripts/get_ksuver.sh "yapixel" "KernelSU" "master" || echo "unknown")
+          KSU_BRANCH="${{ inputs.ksu_branch || github.event.inputs.ksu_branch || 'master' }}"
+          KSU_VER=$(./scripts/get_ksuver.sh "backslashxx" "KernelSU" "$KSU_BRANCH" || echo "unknown")
           echo "KSU version: $KSU_VER"
           echo "ksu_ver=$KSU_VER" >> $GITHUB_OUTPUT
 
@@ -193,3 +206,5 @@ jobs:
         with:
           name: kernel-xxksu
           path: kernel_workspace/${{ env.ZIP_NAME }}
+
+  
