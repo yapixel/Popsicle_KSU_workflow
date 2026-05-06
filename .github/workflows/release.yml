@@ -9,23 +9,22 @@ on:
       sub_level:
         required: true
         type: string
-      release_tag:
-        required: true
-        type: string
       kernel_ver:
         required: true
         type: string
+      # 修改点 1: release_tag 不再是外部输入，固定为 2025-06_r58
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name:  Publish · ${{ inputs.kernel_ver }} · ${{ inputs.release_tag }}
+    # 修改点 2: 直接使用固定标签 2025-06_r58
+    name: 🚀 Publish · ${{ inputs.kernel_ver }} · 2025-06_r58
     runs-on: ubuntu-latest
 
     steps:
-      - name:  Checkout Repository
+      - name: 📥 Checkout Repository
         uses: actions/checkout@v6
 
       - name: Download Build Artifacts
@@ -35,7 +34,7 @@ jobs:
           path: release_zips
           merge-multiple: true
 
-      - name:  Compose Release Body
+      - name: 📝 Compose Release Body
         run: |
           VARIANT="${{ inputs.ksu_variant }}"
           KV="${{ inputs.kernel_ver }}"
@@ -103,7 +102,8 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3.0.0
         with:
-          tag_name: "${{ inputs.release_tag }}"
-          name: "🌟 Popsicle GKI ${{ inputs.kernel_ver }} · ${{ inputs.release_tag }}"
+          # 修改点 3: 固定 tag 为 2025-06_r58
+          tag_name: "2025-06_r58"
+          name: "🌟 Popsicle GKI ${{ inputs.kernel_ver }} · 2025-06_r58"
           body_path: release_body.md
           files: release_zips/*.zip
