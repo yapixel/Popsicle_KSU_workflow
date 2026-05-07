@@ -19,18 +19,21 @@ runs:
       run: |
         cd "${{ inputs.workdir }}"
         
-        # 检查构建用的 Clang 版本，不是系统自带的
+        # 用完整路径调用 Clang
         REAL_VERSION=$("${{ inputs.clang_dir }}/bin/clang" --version | head -1 | grep -oP 'clang version \K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
         TARGET_VERSION="19.0.1"
         
+        echo "Current clang version: $REAL_VERSION"
+        echo "Target clang version: $TARGET_VERSION"
+        
         if [ "$REAL_VERSION" = "$TARGET_VERSION" ]; then
-          echo "Clang version is already $TARGET_VERSION, no wrapper needed"
+          echo "Clang version matches, no wrapper needed"
           {
             echo '#!/bin/bash'
             echo 'exec clang "$@"'
           } > cc-wrapper
         else
-          echo "Clang version is $REAL_VERSION, creating wrapper to spoof as $TARGET_VERSION"
+          echo "Clang version mismatch, creating wrapper to spoof as $TARGET_VERSION"
           {
             echo '#!/bin/bash'
             echo 'if [[ "$*" == *"--version"* ]]; then'
