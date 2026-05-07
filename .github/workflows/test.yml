@@ -47,6 +47,10 @@ jobs:
 
       - name: Free Disk Space & Install Dependencies
         run: |
+          # 卸载 runner 自带的 Clang/LLVM
+          sudo apt-get purge -y clang-* llvm-* lld-* 2>/dev/null || true
+          sudo apt-get autoremove -y 2>/dev/null || true
+          
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
           sudo docker image prune -af 2>/dev/null || true
           sudo apt-get update -qq
@@ -66,9 +70,6 @@ jobs:
           # Clang
           aria2c -s16 -x16 -k1M "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/android16-release/clang-r547379.tar.gz" -o clang.tar.gz
           mkdir -p clang && tar -xzf clang.tar.gz -C clang && rm clang.tar.gz
-          echo "=== Clang directory structure ==="
-          ls -la clang/
-          find clang/ -name "clang" -type f 2>/dev/null || echo "clang binary not found"
           
           # Rust
           aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/1.0/rust-1.83.0.tar.gz" -o rust.tar.gz
@@ -83,6 +84,9 @@ jobs:
           mkdir -p build-tools && tar -xzf build-tools.tar.gz -C build-tools && rm build-tools.tar.gz
           
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
+          
+          # 保存 Clang 绝对路径供后续步骤使用
+          echo "CLANG_HOME=$PWD/clang" >> $GITHUB_ENV
 
       - name: Setup xxKSU
         run: |
@@ -92,21 +96,9 @@ jobs:
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           grep -q "kernelsu" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
-      - name: Debug patches directory
-        run: |
-          echo "=== Workspace root ==="
-          ls -la ${{ github.workspace }}/
-          echo "=== .github directory ==="
-          ls -la ${{ github.workspace }}/.github/ || echo ".github not found"
-          echo "=== Patches directory ==="
-          find ${{ github.workspace }} -name "*.patch" 2>/dev/null || echo "no patches found"
-
       - name: Integrate xxKSU
         run: |
-          echo "Workspace: ${{ github.workspace }}"
-          ls -la "${{ github.workspace }}/.github/patches/xxksu/"
           cd kernel_workspace/common
-          #patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.9.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/lsm_count-h.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/scope-min-manual-hooks-v2.0.patch"
 
@@ -140,13 +132,13 @@ jobs:
         uses: ./.github/actions/setup-cc-wrapper
         with:
           workdir: kernel_workspace/common
-          clang_dir: kernel_workspace/clang
+          clang_dir: ${{ env.CLANG_HOME }}
 
       - name: Compile Kernel
         run: |
           WORKDIR="$(pwd)"
           export PATH="$WORKDIR/kernel_workspace/common:$PATH"
-          export PATH="$WORKDIR/kernel_workspace/clang/bin:$PATH"
+          export PATH="$CLANG_HOME/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/clang-tools:$PATH"
           export PATH="$WORKDIR/kernel_workspace/rust/bin:$PATH"
