@@ -106,6 +106,15 @@ jobs:
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           grep -q "kernelsu" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
+      - name: Debug patches directory
+        run: |
+          echo "=== Workspace root ==="
+          ls -la ${{ github.workspace }}/
+          echo "=== .github directory ==="
+          ls -la ${{ github.workspace }}/.github/ || echo ".github not found"
+          echo "=== Patches directory ==="
+          find ${{ github.workspace }} -name "*.patch" 2>/dev/null || echo "no patches found"
+
       - name: Integrate xxKSU
         run: |
           echo "Workspace: ${{ github.workspace }}"
