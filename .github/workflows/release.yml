@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   release:
-    name: 🚀 Publish · ${{ inputs.kernel_ver }} · 2025-06
+    name: 🚀 Publish · ${{ inputs.kernel_ver }} · android16-6.12-2025-06_r58
     runs-on: ubuntu-latest
 
     steps:
@@ -34,22 +34,7 @@ jobs:
 
       - name: 📝 Compose Release Body
         run: |
-          VARIANT="${{ inputs.ksu_variant }}"
           KV="${{ inputs.kernel_ver }}"
-
-          ROWS=""
-
-          if [[ "$VARIANT" == "all" || "$VARIANT" == "kowsu+susfs" ]]; then
-            ROWS+="| **KowSU + SuSFS** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU) | [simonpunk/susfs4ksu · gki-android16-6.12](https://github.com/simonpunk/susfs4ksu/tree/gki-android16-6.12) |\n"
-          fi
-
-          if [[ "$VARIANT" == "all" || "$VARIANT" == "kowsu" ]]; then
-            ROWS+="| **KowSU** | [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU) | N/A |\n"
-          fi
-
-          if [[ "$VARIANT" == "all" || "$VARIANT" == "xxksu" ]]; then
-            ROWS+="| **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU) | N/A |\n"
-          fi
 
           cat <<RELEASE_BODY > release_body.md
           ## 📱 Popsicle GKI Kernel — \`${KV}\`
@@ -59,19 +44,19 @@ jobs:
 
           ---
 
-          ### 🧩 Variants Shipped
+          ### 🧩 Variant Shipped
 
-          | Variant | KernelSU Source | SuSFS Source |
-          |---------|----------------|--------------|
-          $(echo -e "$ROWS")
+          | Variant | KernelSU Source |
+          |---------|----------------|
+          | **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU) |
+
           ---
 
           ### ✨ Features
 
           | Feature | Details |
           |---------|---------|
-          | 🔒 Root Solution | KernelSU (variant-dependent, see above) |
-          | 📂 SuSFS | Filesystem-level su hiding (KowSU + SuSFS variant only) |
+          | 🔒 Root Solution | KernelSU |
           | 🌐 Networking | BBR congestion control · IPSet suite |
           | 🔑 KMI | KMI bypass for extended module compatibility |
           | 📦 Format | AnyKernel3 flashable \`.zip\` |
@@ -91,16 +76,14 @@ jobs:
 
           ### 🔗 References
 
-          - [KOWX712/KernelSU](https://github.com/KOWX712/KernelSU)
           - [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU)
-          - [simonpunk/susfs4ksu](https://github.com/simonpunk/susfs4ksu)
           - [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3)
           RELEASE_BODY
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3.0.0
         with:
-          tag_name: "2025-06"
-          name: "🌟 Popsicle GKI ${{ inputs.kernel_ver }} · 2025-06"
+          tag_name: "android16-6.12-2025-06_r58"
+          name: "🌟 Popsicle GKI ${{ inputs.kernel_ver }} · android16-6.12-2025-06_r58"
           body_path: release_body.md
           files: release_zips/*.zip
