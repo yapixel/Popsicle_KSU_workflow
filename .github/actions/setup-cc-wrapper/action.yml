@@ -6,6 +6,10 @@ inputs:
     description: Path to kernel/common directory
     required: true
     default: kernel_workspace/common
+  clang_dir:
+    description: Path to extracted Clang directory
+    required: true
+    default: kernel_workspace/clang
 
 runs:
   using: composite
@@ -16,16 +20,19 @@ runs:
         cd "${{ inputs.workdir }}"
         
         REAL_VERSION=$(clang --version | head -1 | grep -oP 'clang version \K[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-        TARGET_VERSION="19.0.1"
+        TARGET_VERSION=$(cat ${{ inputs.clang_dir }}/bin/clang --version 2>/dev/null | head -1 | grep -oP 'clang version \K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "19.0.1")
+        
+        echo "Current clang version: $REAL_VERSION"
+        echo "Target clang version: $TARGET_VERSION"
         
         if [ "$REAL_VERSION" = "$TARGET_VERSION" ]; then
-          echo "Clang version is already $TARGET_VERSION, no wrapper needed"
+          echo "Clang version matches, no wrapper needed"
           {
             echo '#!/bin/bash'
             echo 'exec clang "$@"'
           } > cc-wrapper
         else
-          echo "Clang version is $REAL_VERSION, creating wrapper to spoof as $TARGET_VERSION"
+          echo "Clang version mismatch, creating wrapper to spoof as $TARGET_VERSION"
           {
             echo '#!/bin/bash'
             echo 'if [[ "$*" == *"--version"* ]]; then'
