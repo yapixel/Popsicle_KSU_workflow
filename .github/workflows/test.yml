@@ -111,6 +111,8 @@ jobs:
 
       - name: Integrate xxKSU
         run: |
+          echo "Workspace: ${{ github.workspace }}"
+          ls -la "${{ github.workspace }}/.github/patches/xxksu/"
           cd kernel_workspace/common
           #patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.9.patch"
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/lsm_count-h.patch"
