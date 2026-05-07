@@ -33,13 +33,13 @@ on:
 
 jobs:
   build:
-    name: xxKSU 6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '23' }} (${{ inputs.ksu_branch || github.event.inputs.ksu_branch || 'master' }}) (2025-06)
+    name: xxKSU 6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '23' }} (${{ inputs.ksu_branch || github.event.inputs.ksu_branch || 'master' }}) (android16-6.12-2025-06_r58)
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
       ANDROID_VERSION: 'android16'
       KERNEL_VERSION: '6.12'
-      RELEASE_TAG: '2025-06'
+      RELEASE_TAG: 'android16-6.12-2025-06_r58'
 
     steps:
       - name: Checkout Repository
