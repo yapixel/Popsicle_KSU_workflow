@@ -44,13 +44,13 @@ jobs:
           ---
           ## Technical Details
 
-| Item | Value |
-| :--- | :--- |
-| Kernel | ${KV}.${SUB} |
-| Build Date | 20${DATE} |
-| KSU Type | ${VARIANT} |
-| Networking | BBR + TProxy + IPSet |
-| Format | AnyKernel3 |
+          | Item | Value |
+          | :--- | :--- |
+          | Kernel | ${KV}.${SUB} |
+          | Build Date | 20${DATE} |
+          | KSU Type | ${VARIANT} |
+          | Networking | BBR + TProxy + IPSet |
+          | Format | AnyKernel3 |
 
           ---
           ## Installation
@@ -61,6 +61,7 @@ jobs:
           - [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU)
           - [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3)
           RELEASE_BODY
+          
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
