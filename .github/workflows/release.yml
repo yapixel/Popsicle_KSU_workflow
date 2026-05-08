@@ -18,11 +18,11 @@ permissions:
 
 jobs:
   release:
-    name: 🚀 Publish · ${{ inputs.kernel_ver }} · android16-6.12-2025-06_r58
+    name: Publish · ${{ inputs.kernel_ver }} · android16-6.12-2025-06_r58
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v6
 
       - name: Download Build Artifacts
@@ -32,49 +32,54 @@ jobs:
           path: release_zips
           merge-multiple: true
 
-      - name: 📝 Compose Release Body
+      - name: Compose Release Body
         run: |
           KV="${{ inputs.kernel_ver }}"
-
+          SUB="${{ inputs.sub_level }}"
+          
           cat <<RELEASE_BODY > release_body.md
-          ## 📱 Popsicle GKI Kernel — \`${KV}\`
-          > **Device:** Xiaomi Popsicle · SM8850 (Snapdragon 8 Elite)
-          > **Android:** 16 · GKI \`${KV}\`
-          > **Built:** \`$(date -u +'%Y-%m-%d %H:%M UTC')\`
+          # Popsicle GKI Kernel — android16-${KV}-2025-06_r58
+
+          **Android 16 GKI kernel for Xiaomi Popsicle (SM8850 / Snapdragon 8 Elite)**
+
+          > Built: $(date -u +'%Y-%m-%d %H:%M UTC') · Compiler: Clang 19.0.1 · LTO: Full
 
           ---
 
-          ### 🧩 Variant Shipped
+          ## Variant
 
-          | Variant | KernelSU Source |
-          |---------|----------------|
+          | KSU Type | Upstream |
+          |----------|----------|
           | **xxKSU** | [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU) |
 
           ---
 
-          ### ✨ Features
+          ## Technical Details
 
-          | Feature | Details |
-          |---------|---------|
-          | 🔒 Root Solution | KernelSU |
-          | 🌐 Networking | BBR congestion control · IPSet suite |
-          | 🔑 KMI | KMI bypass for extended module compatibility |
-          | 📦 Format | AnyKernel3 flashable \`.zip\` |
-
-          ---
-
-          ### 📲 Installation
-
-          1. Boot into a custom recovery (e.g. TWRP) **or** use a root-capable flasher
-          2. Flash the \`.zip\` matching your desired variant
-          3. Reboot and verify root via the KernelSU app
-
-          > ⚠️ **Back up your current boot image before flashing.**
-          > This kernel is provided as-is, without warranty of any kind.
+          | Item | Value |
+          |------|-------|
+          | Kernel | ${KV}.${SUB} |
+          | Android | 16 |
+          | KMI | Bypassed |
+          | Congestion Control | BBR |
+          | IPSet | Full suite |
+          | Format | AnyKernel3 |
 
           ---
 
-          ### 🔗 References
+          ## Installation
+
+          ```
+          1. Reboot to recovery (TWRP recommended)
+          2. Flash KSU_popsicle_*.zip
+          3. Reboot and install KernelSU manager
+          ```
+
+          > Backup your current boot image before flashing. This build is provided as-is without warranty.
+
+          ---
+
+          ## Credits
 
           - [backslashxx/KernelSU](https://github.com/backslashxx/KernelSU)
           - [osm0sis/AnyKernel3](https://github.com/osm0sis/AnyKernel3)
