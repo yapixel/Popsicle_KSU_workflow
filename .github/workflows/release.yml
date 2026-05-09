@@ -18,13 +18,13 @@ permissions:
   contents: write
 jobs:
   release:
-    name: Publish · ${{ inputs.kernel_ver }}.${{ inputs.sub_level }} · ${{ inputs.build_date }}
+    name: Publish · ${{ inputs.build_date }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Download Build Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7.0.0
         with:
           pattern: 'kernel-*'
           path: release_zips
@@ -63,9 +63,9 @@ jobs:
           RELEASE_BODY
           
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3.0.0
         with:
-          tag_name: "${{ inputs.kernel_ver }}.${{ inputs.sub_level }}-${{ inputs.build_date }}"
-          name: "Popsicle GKI ${{ inputs.kernel_ver }}.${{ inputs.sub_level }} (${{ inputs.build_date }})"
+          tag_name: "${{ inputs.build_date }}"
+          name: "Popsicle GKI (${{ inputs.build_date }})"
           body_path: release_body.md
           files: release_zips/*.zip
