@@ -149,7 +149,7 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
-          export HOSTCC=clang
+          export HOSTCC=cc-wrapper
           export HOSTLD=ld.lld
           export CC=cc-wrapper
           export LD=ld.lld
@@ -205,12 +205,4 @@ jobs:
           name: kernel-xxksu
           path: kernel_workspace/${{ env.ZIP_NAME }}
 
-  publish-release:
-    needs: build
-    uses: ./.github/workflows/release.yml
-    with:
-      ksu_variant: 'xxksu'
-      sub_level: ${{ inputs.sub_level || github.event.inputs.sub_level || '23' }}
-      kernel_ver: '6.12'
-      build_date: ${{ needs.build.outputs.build_date }}
-    secrets: inherit
+  
