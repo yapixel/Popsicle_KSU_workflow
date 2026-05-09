@@ -112,12 +112,6 @@ jobs:
           variant: "xxksu"
           enable_susfs: "false"
 
-      - name: Setup cc-wrapper
-        uses: ./.github/actions/setup-cc-wrapper
-        with:
-          workdir: kernel_workspace/common
-          clang_dir: ${{ github.workspace }}/kernel_workspace/clang
-
       - name: Compile Kernel
         run: |
           WORKDIR="$(pwd)"
@@ -133,8 +127,6 @@ jobs:
           
           cd kernel_workspace/common
           
-          export PATH=$(pwd):$PATH
-          
           COMMON_REAL_PATH=$(pwd -P)
           ROOT_REAL_PATH=$(dirname "$COMMON_REAL_PATH")
           KCFLAGS=" -fdebug-prefix-map=$ROOT_REAL_PATH=."
@@ -148,7 +140,9 @@ jobs:
           export ARCH=arm64
           export SUBARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
+          export HOSTCC=clang
           export HOSTLD=ld.lld
+          export CC=clang
           export LD=ld.lld
           export AR=llvm-ar
           export NM=llvm-nm
@@ -160,9 +154,6 @@ jobs:
           cp ${{ github.workspace }}/_setup_env.sh ./ 2>/dev/null || true
           chmod 777 ./*.sh 2>/dev/null || true
           source "./_setup_env.sh" 2>/dev/null || true
-          
-          export HOSTCC=cc-wrapper
-          export CC=cc-wrapper
           
           export SOURCE_DATE_EPOCH=1757653061
           export KBUILD_BUILD_TIMESTAMP="Fri Sep 12 04:57:41 UTC 2025"
