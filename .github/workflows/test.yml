@@ -64,7 +64,7 @@ jobs:
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace 
           
-          # 将友好名称映射到具体的版本号
+          
           SELECTED_CLANG="${{ inputs.clang_version || github.event.inputs.clang_version || 'Clang 20' }}"
           if [ "$SELECTED_CLANG" = "Clang 20" ]; then
             CLANG_ID="r547379"
@@ -96,7 +96,7 @@ jobs:
           
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
 
-      # ... (后续 Setup xxKSU, Integrate, Compile, Package 等步骤保持不变)
+      
 
       - name: Setup xxKSU
         run: |
@@ -136,6 +136,14 @@ jobs:
           export PATH="$WORKDIR/kernel_workspace/build-tools/bin:$PATH"
           export PATH="$WORKDIR/kernel_workspace/clang-tools:$PATH"
           export PATH="$WORKDIR/kernel_workspace/rust/bin:$PATH"
+
+          
+          echo "------ Toolchain Information ------"
+          echo "Clang version: $(${WORKDIR}/kernel_workspace/clang/bin/clang --version | head -1)"
+          echo "Rustc version: $(rustc -V 2>/dev/null | head -1 || echo 'Not Found')"
+          echo "Bindgen version: $(bindgen --version 2>/dev/null | head -1 || echo 'Not Found')"
+          echo "pahole version: $(pahole --version 2>/dev/null | head -1 || echo 'Not Found')"
+          echo "-----------------------------------"
           
           cd kernel_workspace/common
           
