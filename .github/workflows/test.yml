@@ -1,4 +1,4 @@
-name: Build GKI with xxKSU
+name: Test Build 
 
 permissions:
   contents: write
@@ -56,11 +56,13 @@ jobs:
           mkdir -p common && tar -xzf common.tar.gz -C common && rm common.tar.gz
           
           # Clang
-          aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/r536225/clang-r536225.tar.gz" -o clang.tar.gz
+          #aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/r536225/clang-r536225.tar.gz" -o clang.tar.gz
+          aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/android16-6.12-2025-06_r58/clang-r547379.tar.gz" -o clang.tar.gz
+          
           mkdir -p clang && tar -xzf clang.tar.gz -C clang && rm clang.tar.gz
           
           # Rust
-          aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/r536225/rust-1.82.0.tar.gz" -o rust.tar.gz
+          aria2c -s16 -x16 -k1M "https://github.com/MidoriKSU/dami-kernel-build/releases/download/1.0/rust-1.83.0.tar.gz" -o rust.tar.gz
           mkdir -p rust && tar -xzf rust.tar.gz -C rust && rm rust.tar.gz
           
           # Clang-tools (bindgen, pahole)
@@ -194,12 +196,4 @@ jobs:
           name: kernel-xxksu
           path: kernel_workspace/${{ env.ZIP_NAME }}
 
-  publish-release:
-    needs: build
-    uses: ./.github/workflows/release.yml
-    with:
-      ksu_variant: 'xxksu'
-      sub_level: ${{ inputs.sub_level || github.event.inputs.sub_level || '23' }}
-      kernel_ver: '6.12'
-      build_date: ${{ needs.build.outputs.build_date }}
-    secrets: inherit
+  
