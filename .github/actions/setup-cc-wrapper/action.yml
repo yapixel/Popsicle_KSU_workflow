@@ -28,14 +28,15 @@ runs:
         echo "Target clang version: $TARGET_VERSION"
         
         if [ "$REAL_VERSION" = "$TARGET_VERSION" ]; then
-          echo "Clang version is $TARGET_VERSION, creating wrapper to filter /mnt/ paths"
+          echo "Clang version is $TARGET_VERSION, creating wrapper to filter /mnt/ paths from -v output"
           {
             echo '#!/bin/bash'
-            echo 'if [[ "$*" == *"--version"* ]]; then'
-            echo "    $REAL_CLANG --version 2>&1 | sed 's|/mnt/disks/build-disk/src/android/llvm-r[^)]*||g'"
+            echo "REAL_CLANG=$REAL_CLANG"
+            echo 'if [[ "$*" == *"-v"* ]]; then'
+            echo "    \$REAL_CLANG -v 2>&1 | sed 's|/mnt/disks/build-disk/src/android/llvm-r[^)]*||g'"
             echo '    exit 0'
             echo 'fi'
-            echo "exec $REAL_CLANG \"\$@\""
+            echo "exec \$REAL_CLANG \"\$@\""
           } > cc-wrapper
         else
           echo "Clang version is $REAL_VERSION, no wrapper filtering needed"
