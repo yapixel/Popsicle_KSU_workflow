@@ -9,7 +9,11 @@ on:
       sub_level:
         required: true
         type: string
-        
+      clang_version:
+        required: false
+        type: string
+        default: 'Clang 20' # 默认使用最新
+
   workflow_dispatch:
     inputs:
       sub_level:
@@ -17,10 +21,19 @@ on:
         required: true
         type: string
         default: '23'
+      clang_version:
+        description: 'Select Clang Version'
+        required: true
+        type: choice
+        options:
+          - 'Clang 20'
+          - 'Clang 19'
+        default: 'Clang 20'
 
 jobs:
   build:
-    name: xxKSU 6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '23' }}
+    # 动态显示作业名称
+    name: xxKSU 6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '23' }} (${{ inputs.clang_version || github.event.inputs.clang_version || 'Clang 20' }})
     runs-on: ubuntu-latest
     timeout-minutes: 300
     env:
@@ -51,29 +64,40 @@ jobs:
         run: |
           mkdir -p kernel_workspace && cd kernel_workspace 
           
-          # Internal Sources
+          # 将友好名称映射到具体的版本号
+          SELECTED_CLANG="${{ inputs.clang_version || github.event.inputs.clang_version || 'Clang 20' }}"
+          if [ "$SELECTED_CLANG" = "Clang 20" ]; then
+            CLANG_ID="r547379"
+            CLANG_URL="https://github.com/yapixel/gki-build-assets/releases/download/android16-6.12-2025-06_r58/clang-r547379.tar.gz"
+          else
+            CLANG_ID="r536225"
+            CLANG_URL="https://github.com/yapixel/gki-build-assets/releases/download/r536225/clang-r536225.tar.gz"
+          fi
+          
+          echo "Selected: $SELECTED_CLANG -> $CLANG_ID"
+          
+          # 下载内核源码
           aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/android16-6.12-2025-06_r58/common-android16-6.12-2025-06_r58.tar.gz" -o common.tar.gz
           mkdir -p common && tar -xzf common.tar.gz -C common && rm common.tar.gz
           
-          # Clang r536225/r547379
-          #aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/r536225/clang-r536225.tar.gz" -o clang.tar.gz
-          aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/android16-6.12-2025-06_r58/clang-r547379.tar.gz" -o clang.tar.gz
+          # 下载选择的 Clang
+          aria2c -s16 -x16 -k1M "$CLANG_URL" -o clang.tar.gz
           mkdir -p clang && tar -xzf clang.tar.gz -C clang && rm clang.tar.gz
           
-          # Rust 1.82.0
+          # 其他固定工具链 (Rust/Clang-tools/Build-tools)
           aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/r536225/rust-1.82.0.tar.gz" -o rust.tar.gz
           mkdir -p rust && tar -xzf rust.tar.gz -C rust && rm rust.tar.gz
           
-          # Clang-tools
           aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/r536225/clang-tools-r536225.tar.gz" -o clang-tools.tar.gz
           mkdir -p clang-tools && tar -xzf clang-tools.tar.gz -C clang-tools && rm clang-tools.tar.gz
           
-          # Build-tools
           aria2c -s16 -x16 -k1M "https://github.com/yapixel/gki-build-assets/releases/download/r536225/build-tools.tar.gz" -o build-tools.tar.gz
           mkdir -p build-tools && tar -xzf build-tools.tar.gz -C build-tools && rm build-tools.tar.gz
           
           sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          
+
+      # ... (后续 Setup xxKSU, Integrate, Compile, Package 等步骤保持不变)
+
       - name: Setup xxKSU
         run: |
           cd kernel_workspace/common
