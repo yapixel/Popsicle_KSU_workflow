@@ -116,7 +116,7 @@ jobs:
         uses: ./.github/actions/setup-cc-wrapper
         with:
           workdir: kernel_workspace/common
-          clang_dir: kernel_workspace/clang
+          clang_dir: ${{ github.workspace }}/kernel_workspace/clang
 
       - name: Compile Kernel
         run: |
