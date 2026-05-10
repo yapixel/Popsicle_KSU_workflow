@@ -14,6 +14,10 @@ on:
       build_date:
         required: true
         type: string
+      clang_ver:
+        required: false
+        type: string
+        default: 'unknown'
 permissions:
   contents: write
 jobs:
@@ -35,6 +39,7 @@ jobs:
           SUB="${{ inputs.sub_level }}"
           DATE="${{ inputs.build_date }}"
           VARIANT="${{ inputs.ksu_variant }}"
+          CLANG="${{ inputs.clang_ver }}"
           
           cat <<RELEASE_BODY > release_body.md
           # Popsicle GKI Kernel — ${KV}.${SUB}
@@ -49,6 +54,7 @@ jobs:
           | Kernel | ${KV}.${SUB} |
           | Build Date | ${DATE} |
           | KSU Type | ${VARIANT} |
+          | Compiler | Clang ${CLANG} |
           | Networking | BBR + TProxy + IPSet |
           | Format | AnyKernel3 |
 
