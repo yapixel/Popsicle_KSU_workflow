@@ -41,9 +41,9 @@ jobs:
           git add -u
           git commit -m "scope-min-manual-hooks-v2.1" -m "Integration of Scope Hooks and SELinux Hide for Kernel 6.12.
           
-Source:
-- Scope Hooks: https://github.com/backslashxx/KernelSU/issues/5
-- Integrated by yapixel for Android 16 GKI"
+          Source:
+          - Scope Hooks: https://github.com/backslashxx/KernelSU/issues/5
+          - Integrated by yapixel for Android 16 GKI"
 
           # 6. 使用 git format-patch 吐出标准的 v2.1 补丁
           # -1 表示针对最近的一次提交生成补丁，--stdout 将内容输出到指定文件
