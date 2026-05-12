@@ -34,9 +34,9 @@
  
 --- a/fs/open.c
 +++ b/fs/open.c
-@@ -354,6 +354,12 @@ SYSCALL_DEFINE4(fallocate, int, fd, int, mode, loff_t, offset, loff_t, len)
- 	return error;
+@@ -374,6 +374,12 @@
  }
+ #endif
  
 +#ifdef CONFIG_KSU
 +__attribute__((hot))
@@ -47,9 +47,9 @@
  /*
   * access() needs to use the real uid/gid, not the effective uid/gid.
   * We do this by temporarily clearing all FS-related capabilities and
-@@ -369,6 +375,10 @@ SYSCALL_DEFINE3(faccessat, int, dfd, const char __user *, filename, int, mode)
- 	int res;
+@@ -473,6 +479,10 @@
  	unsigned int lookup_flags = LOOKUP_FOLLOW;
+ 	const struct cred *old_cred = NULL;
  
 +#ifdef CONFIG_KSU
 +	ksu_handle_faccessat(&dfd, &filename, &mode, NULL);
