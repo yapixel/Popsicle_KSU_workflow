@@ -1,3 +1,23 @@
+From 38f7d8a7d230da2c59893c37cbdd5a604f8d20db Mon Sep 17 00:00:00 2001
+From: yapixel <yapixel@github.com>
+Date: Tue, 12 May 2026 11:03:01 +0000
+Subject: [PATCH] scope-min-manual-hooks-v2.1
+
+Integration of Scope Hooks and SELinux Hide for Kernel 6.12.
+
+Source:
+- Scope Hooks: https://github.com/backslashxx/KernelSU/issues/5
+- Integrated by yapixel for Android 16 GKI
+---
+ fs/exec.c                    | 12 ++++++++++++
+ fs/open.c                    | 10 ++++++++++
+ fs/stat.c                    | 29 +++++++++++++++++++++++++++--
+ kernel/reboot.c              |  8 ++++++++
+ security/selinux/avc.c       |  9 +++++++++
+ security/selinux/hooks.c     | 10 ++++++++++
+ security/selinux/selinuxfs.c | 10 ++++++++++
+ 7 files changed, 86 insertions(+), 2 deletions(-)
+
 diff --git a/fs/exec.c b/fs/exec.c
 index ee89e0f..3548f8e 100644
 --- a/fs/exec.c
@@ -243,3 +263,6 @@ index 8acbaa4..34dc010 100644
  {
  	char *page;
  	ssize_t length;
+-- 
+2.53.0
+
