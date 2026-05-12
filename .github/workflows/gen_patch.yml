@@ -1,0 +1,48 @@
+name: Generate Perfect KSU Patch
+
+on:
+  workflow_dispatch: 
+
+jobs:
+  build-patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout your repository
+        uses: actions/checkout@v6
+
+      - name: Download Kernel Source
+        run: |
+          
+          curl -L -o common.tar.gz https://github.com/yapixel/gki-build-assets/releases/download/android16-6.12-2025-06_r58/common-android16-6.12-2025-06_r58.tar.gz
+          tar -xzvf common.tar.gz
+
+      - name: Regenerate Patch
+        run: |
+          cd common
+          cp security/selinux/hooks.c hooks.c.orig
+          cp security/selinux/avc.c avc.c.orig
+          cp security/selinux/selinuxfs.c selinuxfs.c.orig
+
+          patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/selinux_hide.patch"
+
+          # 3. 生成 0 偏移补丁
+          # 我们把它们合并成一个完美补丁文件
+          echo "--- Generating Perfect Patch ---"
+          diff -u hooks.c.orig security/selinux/hooks.c > ../ksu_612_perfect.patch || true
+          diff -u avc.c.orig security/selinux/avc.c >> ../ksu_612_perfect.patch || true
+          diff -u selinuxfs.c.orig security/selinux/selinuxfs.c >> ../ksu_612_perfect.patch || true
+
+      - name: Output Patch to Summary
+        run: |
+          echo "### 完美补丁预览" >> $GITHUB_STEP_SUMMARY
+          echo "请复制下方代码并保存为 .patch 文件，它在 6.12 源码上将是 0 偏移应用。" >> $GITHUB_STEP_SUMMARY
+          echo '```diff' >> $GITHUB_STEP_SUMMARY
+          cat ksu_612_perfect.patch >> $GITHUB_STEP_SUMMARY
+          echo '
+```' >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload Patch Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: perfect-ksu-patch
+          path: ksu_612_perfect.patch
