@@ -82,7 +82,7 @@ jobs:
         run: |
           cd kernel_workspace/common
           git clone --depth=1 --branch=master https://github.com/backslashxx/KernelSU.git KernelSU
-          cd kernelSU 
+          cd KernelSU 
           git checkout v3.2.4-28
           cd ..
           ln -sf ../KernelSU/kernel drivers/kernelsu
