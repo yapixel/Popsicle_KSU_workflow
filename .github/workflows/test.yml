@@ -25,26 +25,29 @@ concurrency:
   group: kernel-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  SUB_LEVEL: ${{ inputs.sub_level || github.event.inputs.sub_level || '23' }}
-
 jobs:
   build:
-    name: xxKSU 6.12.${{ env.SUB_LEVEL }} (2025-06)
+    name: xxKSU 6.12.${{ inputs.sub_level || github.event.inputs.sub_level || '23' }} (2025-06)
     runs-on: ubuntu-latest
     timeout-minutes: 300
 
     outputs:
       build_date: ${{ steps.meta.outputs.build_date }}
       clang_ver: ${{ steps.meta.outputs.clang_ver }}
+      sub_level: ${{ steps.sub.outputs.sub_level }}
 
     env:
       ANDROID_VERSION: 'android16'
       KERNEL_VERSION: '6.12'
 
     steps:
+      - name: Resolve Sub Level
+        id: sub
+        run: |
+          echo "sub_level=${{ inputs.sub_level || github.event.inputs.sub_level || '23' }}" >> $GITHUB_OUTPUT
+
       - name: Checkout Repository
-        uses: actions/checkout@v6 
+        uses: actions/checkout@v6
         with:
           clean: false
           submodules: true
@@ -88,7 +91,7 @@ jobs:
           cd kernel_workspace/common
 
           git clone --branch=staging --depth=1 https://github.com/backslashxx/KernelSU.git KernelSU
-          
+
           ln -sf ../KernelSU/kernel drivers/kernelsu
           grep -q "kernelsu" drivers/Makefile || echo 'obj-$(CONFIG_KSU) += kernelsu/' >> drivers/Makefile
           grep -q "kernelsu" drivers/Kconfig || sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
@@ -100,7 +103,7 @@ jobs:
 
           patch -p1 -l --fuzz=3 < "${{ github.workspace }}/.github/patches/xxksu/manual-security-hooks-v1.9.patch"
           patch -p1 -l < "${{ github.workspace }}/.github/patches/xxksu/scope-min-manual-hooks-v2.0.patch"
-          patch -p1 -l < "${{ github.workspace }}/.github/patches/xxksu/selinux-hide-v3.patch"
+          patch -p1 -l < "${{ github.workspace }}/.github/patches/xxksu/selinux-hide-v2.patch"
 
       - name: Collect build metadata
         id: meta
@@ -114,7 +117,10 @@ jobs:
 
           git clone --depth=1 https://github.com/TheSillyOk/sh.git scripts
           KSU_VER=$(./scripts/get_ksuver.sh "backslashxx" "KernelSU" "master" || echo "unknown")
+          KSU_VER_STRIPPED="${KSU_VER#v}"
+
           echo "ksu_ver=$KSU_VER" >> $GITHUB_OUTPUT
+          echo "ksu_ver_stripped=$KSU_VER_STRIPPED" >> $GITHUB_OUTPUT
 
           BUILD_DATE=$(date +'%y%m%d')
           echo "build_date=$BUILD_DATE" >> $GITHUB_OUTPUT
@@ -160,9 +166,10 @@ jobs:
           cp "$IMAGE" ./AnyKernel3/
           cd AnyKernel3
 
-          ZIP_NAME="KSU_popsicle_6.12.${SUB_LEVEL}+${{ steps.meta.outputs.ksu_ver#v }}-${{ steps.meta.outputs.build_date }}.zip"
-          zip -r9 "../$ZIP_NAME" *
+          ZIP_NAME="KSU_popsicle_6.12.${{ steps.sub.outputs.sub_level }}+${{ steps.meta.outputs.ksu_ver_stripped }}-${{ steps.meta.outputs.build_date }}.zip"
 
+          zip -r9 "../$ZIP_NAME" *
+          cd ..
           echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: Upload Build Artifact
@@ -176,7 +183,7 @@ jobs:
     uses: ./.github/workflows/release.yml
     with:
       ksu_variant: 'xxksu'
-      sub_level: ${{ env.SUB_LEVEL }}
+      sub_level: ${{ needs.build.outputs.sub_level }}
       kernel_ver: '6.12'
       build_date: ${{ needs.build.outputs.build_date }}
       clang_ver: ${{ needs.build.outputs.clang_ver }}
