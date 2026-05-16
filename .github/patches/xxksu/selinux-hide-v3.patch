@@ -41,11 +41,11 @@
  	struct common_audit_data stack_data;
  	struct selinux_audit_data sad;
 +	
-#if defined(CONFIG_KSU)
-	unsigned int ksu_flags = 0;
-	if (!ksu_slow_avc_audit_full(&ssid, &tsid, &tclass, &requested, &audited, &denied, &result, (void **)&a, &ksu_flags))
-		return result;
- #endif
++#if defined(CONFIG_KSU)
++	unsigned int ksu_flags = 0;
++	if (!ksu_slow_avc_audit_full(&ssid, &tsid, &tclass, &requested, &audited, &denied, &result, (void **)&a, &ksu_flags))
++		return result;
++ #endif
  
  	if (WARN_ON(!tclass || tclass >= ARRAY_SIZE(secclass_map)))
  		return -EINVAL;
